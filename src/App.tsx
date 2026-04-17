@@ -55,6 +55,7 @@ const App = () => {
     const gifts50to100 = parsedData.filter(d => d.amount > 50 && d.amount <= 100).length;
     const gifts100to500 = parsedData.filter(d => d.amount > 100 && d.amount <= 500).length;
     const giftsOver500 = parsedData.filter(d => d.amount > 500).length;
+    const totalAmount = parsedData.reduce((sum, d) => sum + d.amount, 0);
 
     // Daily trends
     const trendsByDate = parsedData.reduce((acc, curr) => {
@@ -76,7 +77,8 @@ const App = () => {
       gifts100to500,
       giftsOver500,
       trendData,
-      totalGifts: parsedData.length
+      totalGifts: parsedData.length,
+      totalAmount
     };
 
   }, [parsedData]);
@@ -89,6 +91,7 @@ Donation Summary Report
 
 Total Donors: ${stats.totalDonors}
 Median Donation: $${stats.median.toFixed(2)}
+Total Amount: $${stats.totalAmount.toFixed(2)}
 
 Breakdown:
 Gifts $50 and under: ${stats.giftsUnder50}
@@ -142,9 +145,10 @@ Gifts over $500: ${stats.giftsOver500}
 
         {stats ? (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+              <StatCard title="Total Amount" value={'$' + stats.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} icon={<DollarSign className="w-6 h-6 text-green-600" />} />
               <StatCard title="Total Donors" value={stats.totalDonors.toString()} icon={<Users className="w-6 h-6 text-blue-500" />} />
-              <StatCard title="Median Donation" value={`$${stats.median.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={<DollarSign className="w-6 h-6 text-green-500" />} />
+              <StatCard title="Median Donation" value={'$' + stats.median.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} icon={<DollarSign className="w-6 h-6 text-green-500" />} />
               <StatCard title="Total Gifts" value={stats.totalGifts.toString()} icon={<Gift className="w-6 h-6 text-purple-500" />} />
             </div>
 
