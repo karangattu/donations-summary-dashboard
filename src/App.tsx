@@ -69,6 +69,19 @@ const App = () => {
       .map(([date, amount]) => ({ date, amount }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
+    const donorCounts = parsedData.reduce((acc, curr) => {
+      const id = curr['Contact ID'] || `${curr['First Name']} ${curr['Last Name']}`;
+      if (!id) return acc;
+      if (!acc[id]) acc[id] = { name: `${curr['First Name'] || ''} ${curr['Last Name'] || ''}`.trim() || 'Unknown', count: 0, amount: 0 };
+      acc[id].count += 1;
+      acc[id].amount += curr.amount;
+      return acc;
+    }, {} as Record<string, {name: string, count: number, amount: number}>);
+
+    const topDonors = Object.values(donorCounts)
+      .sort((a, b) => b.count - a.count || b.amount - a.amount)
+      .slice(0, 10);
+
     return {
       totalDonors,
       median,
@@ -78,7 +91,8 @@ const App = () => {
       giftsOver500,
       trendData,
       totalGifts: parsedData.length,
-      totalAmount
+      totalAmount,
+      topDonors
     };
 
   }, [parsedData]);
@@ -177,13 +191,36 @@ Gifts over $500: ${stats.giftsOver500}
                 </div>
               </div>
 
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-neutral-200">
-                <h3 className="text-xl font-semibold mb-6">Gift Breakdown</h3>
-                <div className="space-y-5">
-                  <BreakdownRow label="Gifts $50 and under" count={stats.giftsUnder50} total={stats.totalGifts} />
-                  <BreakdownRow label="Gifts $50 - $100" count={stats.gifts50to100} total={stats.totalGifts} />
-                  <BreakdownRow label="Gifts $100 - $500" count={stats.gifts100to500} total={stats.totalGifts} />
-                  <BreakdownRow label="Gifts over $500" count={stats.giftsOver500} total={stats.totalGifts} />
+              <div className="space-y-6">
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-neutral-200">
+                  <h3 className="text-xl font-semibold mb-6">Gift Breakdown</h3>
+                  <div className="space-y-5">
+                    <BreakdownRow label="Gifts $50 and under" count={stats.giftsUnder50} total={stats.totalGifts} />
+                    <BreakdownRow label="Gifts $50 - $100" count={stats.gifts50to100} total={stats.totalGifts} />
+                    <BreakdownRow label="Gifts $100 - $500" count={stats.gifts100to500} total={stats.totalGifts} />
+                    <BreakdownRow label="Gifts over $500" count={stats.giftsOver500} total={stats.totalGifts} />
+                  </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-neutral-200">
+                  <h3 className="text-xl font-semibold mb-4">Frequent Donors</h3>
+                  <div className="overflow-y-auto max-h-[16.5rem] pr-2">
+                    <div className="space-y-3">
+                      {stats.topDonors.map((donor, idx) => (
+                        <div key={idx} className="flex justify-between items-center py-2 border-b border-neutral-100 last:border-0">
+                          <span className="font-medium text-neutral-700 truncate mr-2" title={donor.name}>{donor.name}</span>
+                          <div className="text-right whitespace-nowrap">
+                            <span className="block font-bold text-neutral-900 border border-neutral-200 bg-neutral-50 rounded-md px-2 py-0.5 text-xs ml-auto inline-block">
+                              {donor.count} {donor.count === 1 ? 'gift' : 'gifts'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                      {stats.topDonors.length === 0 && (
+                        <p className="text-neutral-500 text-sm italic">No donor data found.</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
