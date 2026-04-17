@@ -191,6 +191,9 @@ Gifts over $500: ${stats.giftsOver500}
             </div>
             <h3 className="text-xl font-medium mb-2">No data uploaded</h3>
             <p className="text-neutral-500 text-center max-w-sm">Upload a CSV file containing your donation records to view your dashboard.</p>
+            <p className="text-neutral-500 text-center max-w-sm mt-6 text-sm bg-neutral-50 p-3 rounded-lg border border-neutral-100">
+              <span className="font-semibold text-neutral-700">Privacy Note:</span> All data is processed entirely in your web browser. No sensitive information is ever uploaded, sent to, or stored on any server.
+            </p>
           </div>
         )}
       </div>
