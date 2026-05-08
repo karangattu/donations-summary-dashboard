@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import Papa from 'papaparse';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { Upload, Copy, FileText, DollarSign, Users, Gift, Search } from 'lucide-react';
+import { Upload, Copy, FileText, DollarSign, Users, Gift, Search, CalendarDays } from 'lucide-react';
 
 type DonationRow = Record<string, string | undefined>;
 type DonorFilter = 'all' | 'major' | 'mid' | 'core' | 'entry' | 'repeat';
 type ThresholdKey = 'major' | 'mid' | 'core';
+type TimelineMode = 'all' | 'month' | 'range';
 
 interface LevelThresholds {
   major: number;
@@ -47,6 +48,12 @@ interface SheetSummaryColumn {
   gifts50to100: number;
   gifts100to500: number;
   giftsOver500: number;
+  sortValue: number;
+}
+
+interface MonthOption {
+  value: string;
+  label: string;
   sortValue: number;
 }
 
@@ -150,6 +157,63 @@ const getMonthBucket = (date: string) => {
     label: `${monthNames[month]} ${year}`,
     sortValue: new Date(year, month, 1).getTime(),
   };
+};
+
+const getDateInputSortValue = (dateValue: string, endOfDay = false) => {
+  if (!dateValue) return null;
+
+  const [year, month, day] = dateValue.split('-').map(Number);
+  if (!year || !month || !day) return null;
+
+  const parsedDate = endOfDay
+    ? new Date(year, month - 1, day, 23, 59, 59, 999)
+    : new Date(year, month - 1, day);
+  const sortValue = parsedDate.getTime();
+
+  return Number.isNaN(sortValue) ? null : sortValue;
+};
+
+const getAvailableMonthOptions = (donations: ParsedDonation[]): MonthOption[] => {
+  const months = donations.reduce((acc, donation) => {
+    const monthBucket = getMonthBucket(donation.date);
+    if (monthBucket.key === 'unknown') return acc;
+
+    acc[monthBucket.key] = {
+      value: monthBucket.key,
+      label: monthBucket.label,
+      sortValue: monthBucket.sortValue,
+    };
+    return acc;
+  }, {} as Record<string, MonthOption>);
+
+  return Object.values(months).sort((a, b) => b.sortValue - a.sortValue);
+};
+
+const filterDonationsByTimeline = (
+  donations: ParsedDonation[],
+  timelineMode: TimelineMode,
+  selectedMonth: string,
+  startDate: string,
+  endDate: string,
+) => {
+  if (timelineMode === 'all') return donations;
+
+  if (timelineMode === 'month') {
+    if (!selectedMonth) return donations;
+    return donations.filter((donation) => getMonthBucket(donation.date).key === selectedMonth);
+  }
+
+  const startSortValue = getDateInputSortValue(startDate);
+  const endSortValue = getDateInputSortValue(endDate, true);
+
+  if (startSortValue === null && endSortValue === null) return donations;
+
+  return donations.filter((donation) => {
+    if (donation.dateSortValue === Number.MAX_SAFE_INTEGER) return false;
+    if (startSortValue !== null && donation.dateSortValue < startSortValue) return false;
+    if (endSortValue !== null && donation.dateSortValue > endSortValue) return false;
+    return true;
+  });
 };
 
 const getYearToDateMonthBuckets = (year: number, lastMonth: number) => {
@@ -292,12 +356,12 @@ const formatThreshold = (amount: number) => {
 };
 
 const getDonorLevelRange = (filter: DonorFilter, thresholds: LevelThresholds) => {
-  if (filter === 'major') return `${formatThreshold(thresholds.major)}+ yearly`;
-  if (filter === 'mid') return `${formatThreshold(thresholds.mid)}-${formatThreshold(Math.max(thresholds.mid, thresholds.major - 1))} yearly`;
-  if (filter === 'core') return `${formatThreshold(thresholds.core)}-${formatThreshold(Math.max(thresholds.core, thresholds.mid - 1))} yearly`;
-  if (filter === 'entry') return `< ${formatThreshold(thresholds.core)} yearly`;
+  if (filter === 'major') return `${formatThreshold(thresholds.major)}+ total`;
+  if (filter === 'mid') return `${formatThreshold(thresholds.mid)}-${formatThreshold(Math.max(thresholds.mid, thresholds.major - 1))} total`;
+  if (filter === 'core') return `${formatThreshold(thresholds.core)}-${formatThreshold(Math.max(thresholds.core, thresholds.mid - 1))} total`;
+  if (filter === 'entry') return `< ${formatThreshold(thresholds.core)} total`;
   if (filter === 'repeat') return '2+ gifts';
-  return 'All yearly totals';
+  return 'All selected totals';
 };
 
 const normalizeDonation = (row: DonationRow): ParsedDonation => {
@@ -380,6 +444,10 @@ const App = () => {
   const [activeFilter, setActiveFilter] = useState<DonorFilter>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [levelThresholds, setLevelThresholds] = useState<LevelThresholds>(defaultLevelThresholds);
+  const [timelineMode, setTimelineMode] = useState<TimelineMode>('all');
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -400,6 +468,15 @@ const App = () => {
     return data.map(normalizeDonation).filter(d => !Number.isNaN(d.amount));
   }, [data]);
 
+  const availableMonths = useMemo(() => getAvailableMonthOptions(parsedData), [parsedData]);
+  const activeSelectedMonth = availableMonths.some(month => month.value === selectedMonth)
+    ? selectedMonth
+    : availableMonths[0]?.value ?? '';
+
+  const timelineData = useMemo(() => {
+    return filterDonationsByTimeline(parsedData, timelineMode, activeSelectedMonth, startDate, endDate);
+  }, [activeSelectedMonth, endDate, parsedData, startDate, timelineMode]);
+
   const updateThreshold = (key: ThresholdKey, value: string) => {
     const amount = Math.max(0, Number(value) || 0);
     setLevelThresholds((current) => ({ ...current, [key]: amount }));
@@ -408,18 +485,18 @@ const App = () => {
   const stats = useMemo(() => {
     if (parsedData.length === 0) return null;
 
-    const donorSummaries = summarizeDonors(parsedData, levelThresholds);
+    const donorSummaries = summarizeDonors(timelineData, levelThresholds);
     const totalDonors = donorSummaries.length;
-    const amounts = parsedData.map(d => d.amount);
+    const amounts = timelineData.map(d => d.amount);
     const median = getMedian(amounts);
-    const totalAmount = parsedData.reduce((sum, d) => sum + d.amount, 0);
+    const totalAmount = timelineData.reduce((sum, d) => sum + d.amount, 0);
     const repeatDonors = donorSummaries.filter(donor => donor.giftCount > 1).length;
     const largestGift = Math.max(...amounts, 0);
 
-    const trendData = buildMonthlyTrendData(parsedData);
+    const trendData = buildMonthlyTrendData(timelineData);
 
     const giftLevelData = giftLevels.map(level => {
-      const gifts = parsedData.filter(donation => donation.amount >= level.min && donation.amount < level.max);
+      const gifts = timelineData.filter(donation => donation.amount >= level.min && donation.amount < level.max);
       return {
         name: level.label,
         gifts: gifts.length,
@@ -442,19 +519,21 @@ const App = () => {
     return {
       totalDonors,
       median,
-      averageGift: totalAmount / parsedData.length,
+      averageGift: timelineData.length > 0 ? totalAmount / timelineData.length : 0,
+      selectedGiftCount: timelineData.length,
+      allGiftCount: parsedData.length,
       repeatDonors,
       largestGift,
       trendData,
-      totalGifts: parsedData.length,
+      totalGifts: timelineData.length,
       totalAmount,
       donorSummaries,
       giftLevelData,
       donorLevelData,
-      sheetSummaryColumns: buildSheetSummaryColumns(parsedData),
+      sheetSummaryColumns: buildSheetSummaryColumns(timelineData),
     };
 
-  }, [levelThresholds, parsedData]);
+  }, [levelThresholds, parsedData.length, timelineData]);
 
   const filteredDonors = useMemo(() => {
     if (!stats) return [];
@@ -515,7 +594,7 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
         <header className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-8 print:hidden">
           <div className="w-full md:w-auto">
             <h1 className="text-3xl font-bold">Donations Summary Dashboard</h1>
-            <p className="text-neutral-500 mt-1">Upload one or more donation CSVs to view year-to-date trends</p>
+            <p className="text-neutral-500 mt-1">Upload one or more donation CSVs to view donation trends</p>
           </div>
           
           <div className="flex flex-wrap gap-3 w-full md:w-auto">
@@ -550,6 +629,77 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
 
         {stats ? (
           <div className="space-y-6">
+            <section className="bg-white p-5 rounded-lg shadow-sm border border-neutral-200 print:hidden">
+              <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="p-3 bg-blue-50 rounded-lg">
+                    <CalendarDays className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold">Timeline</h2>
+                    <p className="text-sm text-neutral-500 mt-1">
+                      Showing {stats.selectedGiftCount} of {stats.allGiftCount} gifts
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full lg:w-auto lg:min-w-[720px]">
+                  <label className="block">
+                    <span className="text-xs font-semibold text-neutral-600">Timeline type</span>
+                    <select
+                      value={timelineMode}
+                      onChange={(event) => setTimelineMode(event.target.value as TimelineMode)}
+                      className="mt-1 w-full border border-neutral-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="all">All data</option>
+                      <option value="month">Month</option>
+                      <option value="range">Date range</option>
+                    </select>
+                  </label>
+
+                  <label className="block">
+                    <span className="text-xs font-semibold text-neutral-600">Month</span>
+                    <select
+                      value={activeSelectedMonth}
+                      onChange={(event) => setSelectedMonth(event.target.value)}
+                      disabled={timelineMode !== 'month' || availableMonths.length === 0}
+                      className="mt-1 w-full border border-neutral-300 rounded-md px-3 py-2 text-sm bg-white disabled:bg-neutral-100 disabled:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {availableMonths.length === 0 ? (
+                        <option value="">No dated gifts</option>
+                      ) : (
+                        availableMonths.map(month => (
+                          <option key={month.value} value={month.value}>{month.label}</option>
+                        ))
+                      )}
+                    </select>
+                  </label>
+
+                  <label className="block">
+                    <span className="text-xs font-semibold text-neutral-600">Start date</span>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(event) => setStartDate(event.target.value)}
+                      disabled={timelineMode !== 'range'}
+                      className="mt-1 w-full border border-neutral-300 rounded-md px-3 py-2 text-sm disabled:bg-neutral-100 disabled:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="text-xs font-semibold text-neutral-600">End date</span>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(event) => setEndDate(event.target.value)}
+                      disabled={timelineMode !== 'range'}
+                      className="mt-1 w-full border border-neutral-300 rounded-md px-3 py-2 text-sm disabled:bg-neutral-100 disabled:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                </div>
+              </div>
+            </section>
+
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
               <StatCard title="Total Amount" value={formatCurrency(stats.totalAmount)} icon={<DollarSign className="w-6 h-6 text-green-600" />} />
               <StatCard title="Total Donors" value={stats.totalDonors.toString()} icon={<Users className="w-6 h-6 text-blue-500" />} />
@@ -562,7 +712,7 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-lg font-semibold">Explore Donor Levels</h2>
-                  <p className="text-sm text-neutral-500 mt-1">{filteredDonors.length} donors shown from {stats.totalDonors} total · levels use yearly donor total</p>
+                  <p className="text-sm text-neutral-500 mt-1">{filteredDonors.length} donors shown from {stats.totalDonors} total · levels use selected timeline total</p>
                 </div>
                 <div className="relative w-full lg:w-80">
                   <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -741,7 +891,7 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                 <div className="p-6 border-b border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <h3 className="text-lg font-semibold">Donor Investigation Table</h3>
-                    <p className="text-sm text-neutral-500 mt-1">Sorted by yearly donor total, then gift count</p>
+                    <p className="text-sm text-neutral-500 mt-1">Sorted by selected timeline total, then gift count</p>
                   </div>
                   <span className="text-sm font-semibold text-neutral-700">{filteredDonors.length} matching donors</span>
                 </div>
@@ -750,7 +900,7 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                     <thead className="bg-neutral-50 text-neutral-500 border-b border-neutral-200">
                       <tr>
                         <th className="text-left font-semibold px-6 py-3">Donor</th>
-                        <th className="text-right font-semibold px-4 py-3">Yearly Total</th>
+                        <th className="text-right font-semibold px-4 py-3">Timeline Total</th>
                         <th className="text-right font-semibold px-4 py-3">Gifts</th>
                         <th className="text-right font-semibold px-4 py-3">Avg</th>
                         <th className="text-left font-semibold px-4 py-3">Level</th>

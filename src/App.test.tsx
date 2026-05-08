@@ -247,6 +247,59 @@ describe('Donations Summary Dashboard', () => {
     })
   })
 
+  it('updates dashboard data when users select a month or date range', async () => {
+    render(<App />)
+    const donorExport = new File(['donors'], 'timeline.csv', { type: 'text/csv' })
+    const input = screen.getByLabelText(/Upload CSV/i)
+    const currentYear = new Date().getFullYear()
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((_file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+
+      config.complete({
+        data: [
+          { Donor: 'J1', 'Donation Date': `1/5/${currentYear}`, 'Donation Amount': '$100.00', 'First Name': 'January', 'Last Name': 'Donor' },
+          { Donor: 'F1', 'Donation Date': `2/10/${currentYear}`, 'Donation Amount': '$200.00', 'First Name': 'February', 'Last Name': 'Donor' },
+          { Donor: 'M1', 'Donation Date': `3/5/${currentYear}`, 'Donation Amount': '$300.00', 'First Name': 'March', 'Last Name': 'Start' },
+          { Donor: 'M2', 'Donation Date': `3/20/${currentYear}`, 'Donation Amount': '$400.00', 'First Name': 'March', 'Last Name': 'End' }
+        ],
+        errors: [], meta: parseMeta
+      }, undefined)
+    })
+
+    fireEvent.change(input, { target: { files: [donorExport] } })
+
+    await waitFor(() => {
+      expect(screen.getAllByText('$1,000.00').length).toBeGreaterThan(0)
+      expect(screen.getByText('January Donor')).toBeInTheDocument()
+      expect(screen.getByText('March End')).toBeInTheDocument()
+    })
+
+    fireEvent.change(screen.getByLabelText('Timeline type'), { target: { value: 'month' } })
+    fireEvent.change(screen.getByLabelText('Month'), { target: { value: `${currentYear}-02` } })
+
+    await waitFor(() => {
+      expect(screen.getAllByText('$200.00').length).toBeGreaterThan(0)
+      expect(within(screen.getByText('Total Gifts').parentElement!).getByText('1')).toBeInTheDocument()
+      expect(screen.getByText('February Donor')).toBeInTheDocument()
+      expect(screen.queryByText('January Donor')).not.toBeInTheDocument()
+      expect(screen.queryByText('March Start')).not.toBeInTheDocument()
+    })
+
+    fireEvent.change(screen.getByLabelText('Timeline type'), { target: { value: 'range' } })
+    fireEvent.change(screen.getByLabelText('Start date'), { target: { value: `${currentYear}-03-01` } })
+    fireEvent.change(screen.getByLabelText('End date'), { target: { value: `${currentYear}-03-10` } })
+
+    await waitFor(() => {
+      expect(screen.getAllByText('$300.00').length).toBeGreaterThan(0)
+      expect(within(screen.getByText('Total Gifts').parentElement!).getByText('1')).toBeInTheDocument()
+      expect(screen.getByText('March Start')).toBeInTheDocument()
+      expect(screen.queryByText('February Donor')).not.toBeInTheDocument()
+      expect(screen.queryByText('March End')).not.toBeInTheDocument()
+    })
+  })
+
   it('copies a Google Sheets friendly monthly TSV summary', async () => {
     const writeText = vi.fn()
     Object.assign(navigator, {
