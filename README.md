@@ -1,6 +1,6 @@
 # Donations Summary Dashboard
 
-A React application for processing monthly donation CSV files entirely in the browser.
+A React application for processing one or more donation CSV files entirely in the browser.
 
 Features:
 - Total Donor metrics
