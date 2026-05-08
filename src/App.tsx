@@ -250,15 +250,24 @@ const buildMonthlyTrendData = (donations: ParsedDonation[]) => {
 };
 
 const buildGoogleSheetsTsv = (columns: SheetSummaryColumn[]) => {
+  const currentDate = new Date();
+  const currentYear = currentDate.getFullYear();
+  const templateMonthColumns = getYearToDateMonthBuckets(currentYear, currentDate.getMonth()).map(bucket => ({
+    ...bucket,
+    column: columns.find(summaryColumn => summaryColumn.label === bucket.label) ??
+      summarizeSheetColumn(bucket.label, [], bucket.sortValue),
+  }));
+  const valueColumns = templateMonthColumns.map(month => month.column);
+  const monthLabels = templateMonthColumns.map(month => month.label);
+  const countCell = (value: number) => `'${value}`;
   const rows = [
-    ['Metric', ...columns.map(column => column.label)],
-    ['Total donors this month', ...columns.map(column => column.totalDonors.toString())],
-    ['Median donation amount', ...columns.map(column => formatCurrency(column.medianDonation))],
-    ['Total donation amount', ...columns.map(column => formatCurrency(column.totalAmount))],
-    ['Gifts $50 and under', ...columns.map(column => column.giftsUnder50.toString())],
-    ['Gifts $50 - $100', ...columns.map(column => column.gifts50to100.toString())],
-    ['Gifts $100 - $500', ...columns.map(column => column.gifts100to500.toString())],
-    ['Gifts over $500', ...columns.map(column => column.giftsOver500.toString())],
+    ['', '', ...monthLabels],
+    ['', 'Total donors this month', ...valueColumns.map(column => countCell(column.totalDonors))],
+    ['Donations', 'Median donation amount', ...valueColumns.map(column => formatCurrency(column.medianDonation))],
+    ['', 'Gifts $50 and under', ...valueColumns.map(column => countCell(column.giftsUnder50))],
+    ['', 'Gifts $50 - $100', ...valueColumns.map(column => countCell(column.gifts50to100))],
+    ['', 'Gifts $100 - $500', ...valueColumns.map(column => countCell(column.gifts100to500))],
+    ['', 'Gifts over $500', ...valueColumns.map(column => countCell(column.giftsOver500))],
   ];
 
   return rows.map(row => row.join('\t')).join('\n');

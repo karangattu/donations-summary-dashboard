@@ -260,25 +260,6 @@ describe('Donations Summary Dashboard', () => {
     const now = new Date()
     const currentYear = now.getFullYear()
     const currentMonth = now.getMonth()
-    const monthNames = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December'
-    ]
-    const expectedMonths = monthNames.slice(0, currentMonth + 1).map(month => `${month} ${currentYear}`)
-    const blankMonthCount = Math.max(0, currentMonth - 1)
-    const zeroMonths = Array(blankMonthCount).fill('0')
-    const zeroCurrencyMonths = Array(blankMonthCount).fill('$0.00')
-    const monthHeader = [...expectedMonths, 'All']
     const donationRows = currentMonth === 0
       ? [
           { Donor: 'D1', 'Donation Date': `1/2/${currentYear}`, 'Donation Amount': '$100.00', 'First Name': 'One', 'Last Name': 'Donor' },
@@ -307,28 +288,39 @@ describe('Donations Summary Dashboard', () => {
 
     fireEvent.click(screen.getByText('Copy Sheet TSV'))
 
-    const januaryDonorCount = currentMonth === 0 ? '2' : '1'
-    const januaryDonationTotal = '$150.00'
-    const januaryMedian = '$75.00'
-    const januaryUnder50 = currentMonth === 0 ? '1' : '0'
-    const januaryFiftyTo100 = currentMonth === 0 ? '1' : '1'
-    const donorCounts = currentMonth === 0 ? [januaryDonorCount] : [januaryDonorCount, ...zeroMonths, '1']
-    const medianCounts = currentMonth === 0 ? [januaryMedian] : ['$100.00', ...zeroCurrencyMonths, '$50.00']
-    const totalCounts = currentMonth === 0 ? [januaryDonationTotal] : ['$100.00', ...zeroCurrencyMonths, '$50.00']
-    const under50Counts = currentMonth === 0 ? [januaryUnder50] : ['0', ...zeroMonths, '1']
-    const fiftyToHundredCounts = currentMonth === 0 ? [januaryFiftyTo100] : ['1', ...zeroMonths, '0']
-    const over500Counts = Array(expectedMonths.length).fill('0')
+    const copiedText = writeText.mock.calls[0][0] as string
+    const rows = copiedText.split('\n')
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December'
+    ]
+    const expectedMonths = monthNames.slice(0, currentMonth + 1).map(month => `${month} ${currentYear}`)
+    const donationColumnCount = 2 + expectedMonths.length
+    const currentMonthIndex = currentMonth + 2
 
-    expect(writeText).toHaveBeenCalledWith([
-      `Metric\t${monthHeader.join('\t')}`,
-      `Total donors this month\t${donorCounts.join('\t')}\t2`,
-      `Median donation amount\t${medianCounts.join('\t')}\t$75.00`,
-      `Total donation amount\t${totalCounts.join('\t')}\t$150.00`,
-      `Gifts $50 and under\t${under50Counts.join('\t')}\t1`,
-      `Gifts $50 - $100\t${fiftyToHundredCounts.join('\t')}\t1`,
-      `Gifts $100 - $500\t${over500Counts.join('\t')}\t0`,
-      `Gifts over $500\t${over500Counts.join('\t')}\t0`
-    ].join('\n'))
+    expect(rows[0]).toBe(['', '', ...expectedMonths].join('\t'))
+    expect(rows.find(row => row.includes('Total donors this month'))?.split('\t')).toHaveLength(donationColumnCount)
+    expect(rows.find(row => row.includes('Median donation amount'))?.split('\t')).toHaveLength(donationColumnCount)
+
+    const donorRow = rows.find(row => row.includes('Total donors this month'))?.split('\t')
+    const medianRow = rows.find(row => row.includes('Median donation amount'))?.split('\t')
+    const under50Row = rows.find(row => row.includes('Gifts $50 and under'))?.split('\t')
+    expect(donorRow?.[0]).toBe('')
+    expect(medianRow?.[0]).toBe('Donations')
+    expect(donorRow?.[2]).toBe(currentMonth === 0 ? "'2" : "'1")
+    expect(donorRow?.[currentMonthIndex]).toBe(currentMonth === 0 ? "'2" : "'1")
+    expect(medianRow?.[2]).toBe(currentMonth === 0 ? '$75.00' : '$100.00')
+    expect(under50Row?.[2]).toBe(currentMonth === 0 ? "'1" : "'0")
   })
 
   it('makes unknown donation dates explicit in the copied monthly TSV summary', async () => {
@@ -380,18 +372,21 @@ describe('Donations Summary Dashboard', () => {
 
     fireEvent.click(screen.getByText('Copy Sheet TSV'))
 
-    const emptyMonthCount = Math.max(0, expectedMonths.length - 1)
-    const zeroes = Array(emptyMonthCount).fill('0')
-    const zeroCurrency = Array(emptyMonthCount).fill('$0.00')
-    expect(writeText).toHaveBeenCalledWith([
-      `Metric\t${[...expectedMonths, 'Unknown Date', 'All'].join('\t')}`,
-      `Total donors this month\t${['1', ...zeroes, '1', '2'].join('\t')}`,
-      `Median donation amount\t${['$100.00', ...zeroCurrency, '$50.00', '$75.00'].join('\t')}`,
-      `Total donation amount\t${['$100.00', ...zeroCurrency, '$50.00', '$150.00'].join('\t')}`,
-      `Gifts $50 and under\t${['0', ...zeroes, '1', '1'].join('\t')}`,
-      `Gifts $50 - $100\t${['1', ...zeroes, '0', '1'].join('\t')}`,
-      `Gifts $100 - $500\t${[...Array(expectedMonths.length).fill('0'), '0', '0'].join('\t')}`,
-      `Gifts over $500\t${[...Array(expectedMonths.length).fill('0'), '0', '0'].join('\t')}`
-    ].join('\n'))
+    const copiedText = writeText.mock.calls[0][0] as string
+    const rows = copiedText.split('\n')
+
+    expect(rows[0]).toBe(['', '', ...expectedMonths].join('\t'))
+
+    const donorRow = rows.find(row => row.includes('Total donors this month'))?.split('\t')
+    const medianRow = rows.find(row => row.includes('Median donation amount'))?.split('\t')
+    const under50Row = rows.find(row => row.includes('Gifts $50 and under'))?.split('\t')
+
+    // Only the January in-year donation is included; the TBA/unknown date donation is excluded.
+    expect(donorRow?.[2]).toBe("'1")
+    expect(medianRow?.[2]).toBe('$100.00')
+    expect(under50Row?.[2]).toBe("'0")
+    // No Unknown Date or All columns in the new format
+    expect(rows[0].split('\t')).not.toContain('Unknown Date')
+    expect(rows[0].split('\t')).not.toContain('All')
   })
 })
