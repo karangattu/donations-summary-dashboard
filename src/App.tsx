@@ -40,6 +40,7 @@ interface DonorSummary {
 interface SheetSummaryColumn {
   label: string;
   totalDonors: number;
+  totalGifts: number;
   medianDonation: number;
   totalAmount: number;
   giftsUnder50: number;
@@ -151,6 +152,14 @@ const getMonthBucket = (date: string) => {
   };
 };
 
+const getYearToDateMonthBuckets = (year: number, lastMonth: number) => {
+  return Array.from({ length: lastMonth + 1 }, (_, month) => ({
+    key: `${year}-${String(month + 1).padStart(2, '0')}`,
+    label: `${monthNames[month]} ${year}`,
+    sortValue: new Date(year, month, 1).getTime(),
+  }));
+};
+
 const summarizeSheetColumn = (label: string, donations: ParsedDonation[], sortValue: number): SheetSummaryColumn => {
   const donorIds = new Set(donations.map(donation => donation.donorKey).filter(Boolean));
   const amounts = donations.map(donation => donation.amount);
@@ -158,6 +167,7 @@ const summarizeSheetColumn = (label: string, donations: ParsedDonation[], sortVa
   return {
     label,
     totalDonors: donorIds.size,
+    totalGifts: donations.length,
     medianDonation: getMedian(amounts),
     totalAmount: amounts.reduce((sum, amount) => sum + amount, 0),
     giftsUnder50: donations.filter(donation => donation.amount <= 50).length,
@@ -169,8 +179,22 @@ const summarizeSheetColumn = (label: string, donations: ParsedDonation[], sortVa
 };
 
 const buildSheetSummaryColumns = (donations: ParsedDonation[]) => {
+  const currentDate = new Date();
+  const targetYear = currentDate.getFullYear();
+  const lastMonth = currentDate.getMonth();
+  const unknownDateDonations: ParsedDonation[] = [];
   const monthGroups = donations.reduce((acc, donation) => {
     const monthBucket = getMonthBucket(donation.date);
+    if (monthBucket.key === 'unknown' || monthBucket.sortValue === Number.MAX_SAFE_INTEGER) {
+      unknownDateDonations.push(donation);
+      return acc;
+    }
+
+    const donationYear = new Date(donation.date).getFullYear();
+    if (donationYear !== targetYear) {
+      return acc;
+    }
+
     if (!acc[monthBucket.key]) {
       acc[monthBucket.key] = {
         label: monthBucket.label,
@@ -183,14 +207,46 @@ const buildSheetSummaryColumns = (donations: ParsedDonation[]) => {
     return acc;
   }, {} as Record<string, { label: string; sortValue: number; donations: ParsedDonation[] }>);
 
-  const monthColumns = Object.values(monthGroups)
-    .map(group => summarizeSheetColumn(group.label, group.donations, group.sortValue))
+  const monthColumns = getYearToDateMonthBuckets(targetYear, lastMonth)
+    .map(bucket => {
+      const group = monthGroups[bucket.key];
+      return summarizeSheetColumn(bucket.label, group?.donations ?? [], bucket.sortValue);
+    })
     .sort((a, b) => a.sortValue - b.sortValue);
+  const unknownDateColumn = unknownDateDonations.length > 0
+    ? [summarizeSheetColumn('Unknown Date', unknownDateDonations, Number.MAX_SAFE_INTEGER)]
+    : [];
 
   return [
     ...monthColumns,
+    ...unknownDateColumn,
     summarizeSheetColumn('All', donations, Number.MAX_SAFE_INTEGER + 1),
   ];
+};
+
+const buildMonthlyTrendData = (donations: ParsedDonation[]) => {
+  const currentDate = new Date();
+  const targetYear = currentDate.getFullYear();
+  const monthTotals = donations.reduce((acc, donation) => {
+    const monthBucket = getMonthBucket(donation.date);
+    if (monthBucket.key === 'unknown' || monthBucket.sortValue === Number.MAX_SAFE_INTEGER) {
+      return acc;
+    }
+
+    const donationYear = new Date(donation.date).getFullYear();
+    if (donationYear !== targetYear) {
+      return acc;
+    }
+
+    acc[monthBucket.key] = (acc[monthBucket.key] ?? 0) + donation.amount;
+    return acc;
+  }, {} as Record<string, number>);
+
+  return getYearToDateMonthBuckets(targetYear, currentDate.getMonth()).map(bucket => ({
+    date: bucket.label.replace(` ${targetYear}`, ''),
+    amount: monthTotals[bucket.key] ?? 0,
+    dateSortValue: bucket.sortValue,
+  }));
 };
 
 const buildGoogleSheetsTsv = (columns: SheetSummaryColumn[]) => {
@@ -351,16 +407,7 @@ const App = () => {
     const repeatDonors = donorSummaries.filter(donor => donor.giftCount > 1).length;
     const largestGift = Math.max(...amounts, 0);
 
-    const trendsByDate = parsedData.reduce((acc, curr) => {
-      const date = curr.date;
-      if (!acc[date]) acc[date] = 0;
-      acc[date] += curr.amount;
-      return acc;
-    }, {} as Record<string, number>);
-
-    const trendData = Object.entries(trendsByDate)
-      .map(([date, amount]) => ({ date, amount, dateSortValue: getDateSortValue(date) }))
-      .sort((a, b) => a.dateSortValue - b.dateSortValue);
+    const trendData = buildMonthlyTrendData(parsedData);
 
     const giftLevelData = giftLevels.map(level => {
       const gifts = parsedData.filter(donation => donation.amount >= level.min && donation.amount < level.max);
@@ -603,7 +650,7 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                      <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{fill: '#6B7280'}} dy={10} />
+                      <XAxis dataKey="date" interval={0} tickLine={false} axisLine={false} tick={{fill: '#6B7280', fontSize: 12}} dy={10} />
                       <YAxis tickLine={false} axisLine={false} tick={{fill: '#6B7280'}} dx={-10} tickFormatter={(value) => `$${value}`} />
                       <Tooltip 
                         contentStyle={{ borderRadius: '8px', border: '1px solid #E5E7EB', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
@@ -615,6 +662,31 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                       <Area type="monotone" dataKey="amount" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorAmount)" />
                     </AreaChart>
                   </ResponsiveContainer>
+                </div>
+                <div className="mt-6 overflow-x-auto">
+                  <table className="w-full min-w-[640px] text-sm">
+                    <caption className="sr-only">Monthly giving summary</caption>
+                    <thead>
+                      <tr className="border-b border-neutral-200 text-left text-xs uppercase text-neutral-500">
+                        <th className="py-2 pr-4 font-semibold">Period</th>
+                        <th className="py-2 pr-4 font-semibold text-right">Donors</th>
+                        <th className="py-2 pr-4 font-semibold text-right">Gifts</th>
+                        <th className="py-2 pr-4 font-semibold text-right">Median</th>
+                        <th className="py-2 font-semibold text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100">
+                      {stats.sheetSummaryColumns.map((column) => (
+                        <tr key={column.label} className={column.label === 'All' ? 'font-semibold text-neutral-950' : 'text-neutral-700'}>
+                          <td className="py-2 pr-4 whitespace-nowrap">{column.label}</td>
+                          <td className="py-2 pr-4 text-right">{column.totalDonors}</td>
+                          <td className="py-2 pr-4 text-right">{column.totalGifts}</td>
+                          <td className="py-2 pr-4 text-right">{formatCurrency(column.medianDonation)}</td>
+                          <td className="py-2 text-right">{formatCurrency(column.totalAmount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </section>
 

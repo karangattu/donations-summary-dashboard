@@ -3,6 +3,7 @@
 A React application for processing one or more donation CSV files entirely in the browser.
 
 Features:
+
 - Total Donor metrics
 - Median Donation tracking
 - Dynamic gift breakdown sizing

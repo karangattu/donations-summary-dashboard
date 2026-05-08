@@ -80,10 +80,56 @@ describe('Donations Summary Dashboard', () => {
     fireEvent.change(input, { target: { files: [marchFile, aprilFile] } })
 
     await waitFor(() => {
-      expect(screen.getByText('$175.00')).toBeInTheDocument()
+      expect(screen.getAllByText('$175.00').length).toBeGreaterThan(0)
       expect(within(screen.getByText('Total Gifts').parentElement!).getByText('3')).toBeInTheDocument()
       expect(within(screen.getByText('Total Donors').parentElement!).getByText('2')).toBeInTheDocument()
       expect(screen.getByText('Donor Investigation Table')).toBeInTheDocument()
+    })
+  })
+
+  it('shows year-to-date months in the visible giving trend when months have no gifts', async () => {
+    render(<App />)
+    const marchFile = new File(['march'], 'march.csv', { type: 'text/csv' })
+    const mayFile = new File(['may'], 'may.csv', { type: 'text/csv' })
+    const input = screen.getByLabelText(/Upload CSV/i)
+    const currentYear = new Date().getFullYear()
+    const currentMonth = new Date().getMonth()
+    const currentMonthName = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December'
+    ][currentMonth]
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+
+      config.complete({
+        data: file.name === 'march.csv'
+          ? [
+              { 'Contact ID': '1', 'Transaction Date': `3/1/${currentYear}`, 'Transaction Amount Subtotal': '$100.00', 'First Name': 'A', 'Last Name': 'Donor' }
+            ]
+          : [
+              { 'Contact ID': '2', 'Transaction Date': `${currentMonth + 1}/1/${currentYear}`, 'Transaction Amount Subtotal': '$50.00', 'First Name': 'B', 'Last Name': 'Donor' }
+            ],
+        errors: [], meta: parseMeta
+      }, undefined)
+    })
+
+    fireEvent.change(input, { target: { files: [marchFile, mayFile] } })
+
+    await waitFor(() => {
+      expect(screen.getByText('January')).toBeInTheDocument()
+      expect(screen.getByText(currentMonthName)).toBeInTheDocument()
     })
   })
 
@@ -109,7 +155,7 @@ describe('Donations Summary Dashboard', () => {
     fireEvent.change(input, { target: { files: [donorExport] } })
 
     await waitFor(() => {
-      expect(screen.getByText('$175.00')).toBeInTheDocument()
+      expect(screen.getAllByText('$175.00').length).toBeGreaterThan(0)
       expect(within(screen.getByText('Total Gifts').parentElement!).getByText('3')).toBeInTheDocument()
       expect(within(screen.getByText('Total Donors').parentElement!).getByText('2')).toBeInTheDocument()
       expect(screen.getByText('Ada One')).toBeInTheDocument()
@@ -211,6 +257,107 @@ describe('Donations Summary Dashboard', () => {
     render(<App />)
     const donorExport = new File(['donors'], 'donors.csv', { type: 'text/csv' })
     const input = screen.getByLabelText(/Upload CSV/i)
+    const now = new Date()
+    const currentYear = now.getFullYear()
+    const currentMonth = now.getMonth()
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December'
+    ]
+    const expectedMonths = monthNames.slice(0, currentMonth + 1).map(month => `${month} ${currentYear}`)
+    const blankMonthCount = Math.max(0, currentMonth - 1)
+    const zeroMonths = Array(blankMonthCount).fill('0')
+    const zeroCurrencyMonths = Array(blankMonthCount).fill('$0.00')
+    const monthHeader = [...expectedMonths, 'All']
+    const donationRows = currentMonth === 0
+      ? [
+          { Donor: 'D1', 'Donation Date': `1/2/${currentYear}`, 'Donation Amount': '$100.00', 'First Name': 'One', 'Last Name': 'Donor' },
+          { Donor: 'D2', 'Donation Date': `1/3/${currentYear}`, 'Donation Amount': '$50.00', 'First Name': 'Two', 'Last Name': 'Donor' }
+        ]
+      : [
+          { Donor: 'D1', 'Donation Date': `1/2/${currentYear}`, 'Donation Amount': '$100.00', 'First Name': 'One', 'Last Name': 'Donor' },
+          { Donor: 'D2', 'Donation Date': `${currentMonth + 1}/3/${currentYear}`, 'Donation Amount': '$50.00', 'First Name': 'Two', 'Last Name': 'Donor' }
+        ]
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((_file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+
+      config.complete({
+        data: donationRows,
+        errors: [], meta: parseMeta
+      }, undefined)
+    })
+
+    fireEvent.change(input, { target: { files: [donorExport] } })
+
+    await waitFor(() => {
+      expect(screen.getByText('Copy Sheet TSV')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByText('Copy Sheet TSV'))
+
+    const januaryDonorCount = currentMonth === 0 ? '2' : '1'
+    const januaryDonationTotal = '$150.00'
+    const januaryMedian = '$75.00'
+    const januaryUnder50 = currentMonth === 0 ? '1' : '0'
+    const januaryFiftyTo100 = currentMonth === 0 ? '1' : '1'
+    const donorCounts = currentMonth === 0 ? [januaryDonorCount] : [januaryDonorCount, ...zeroMonths, '1']
+    const medianCounts = currentMonth === 0 ? [januaryMedian] : ['$100.00', ...zeroCurrencyMonths, '$50.00']
+    const totalCounts = currentMonth === 0 ? [januaryDonationTotal] : ['$100.00', ...zeroCurrencyMonths, '$50.00']
+    const under50Counts = currentMonth === 0 ? [januaryUnder50] : ['0', ...zeroMonths, '1']
+    const fiftyToHundredCounts = currentMonth === 0 ? [januaryFiftyTo100] : ['1', ...zeroMonths, '0']
+    const over500Counts = Array(expectedMonths.length).fill('0')
+
+    expect(writeText).toHaveBeenCalledWith([
+      `Metric\t${monthHeader.join('\t')}`,
+      `Total donors this month\t${donorCounts.join('\t')}\t2`,
+      `Median donation amount\t${medianCounts.join('\t')}\t$75.00`,
+      `Total donation amount\t${totalCounts.join('\t')}\t$150.00`,
+      `Gifts $50 and under\t${under50Counts.join('\t')}\t1`,
+      `Gifts $50 - $100\t${fiftyToHundredCounts.join('\t')}\t1`,
+      `Gifts $100 - $500\t${over500Counts.join('\t')}\t0`,
+      `Gifts over $500\t${over500Counts.join('\t')}\t0`
+    ].join('\n'))
+  })
+
+  it('makes unknown donation dates explicit in the copied monthly TSV summary', async () => {
+    const writeText = vi.fn()
+    Object.assign(navigator, {
+      clipboard: { writeText }
+    })
+    vi.spyOn(window, 'alert').mockImplementation(() => {})
+
+    render(<App />)
+    const donorExport = new File(['donors'], 'donors.csv', { type: 'text/csv' })
+    const input = screen.getByLabelText(/Upload CSV/i)
+    const currentYear = new Date().getFullYear()
+    const currentMonth = new Date().getMonth()
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December'
+    ]
+    const expectedMonths = monthNames.slice(0, currentMonth + 1).map(month => `${month} ${currentYear}`)
 
     const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
     PapaMock.mockImplementation((_file: File, config: Papa.ParseConfig<DonationRow>) => {
@@ -218,9 +365,8 @@ describe('Donations Summary Dashboard', () => {
 
       config.complete({
         data: [
-          { Donor: 'D1', 'Donation Date': '1/2/2026', 'Donation Amount': '$100.00', 'First Name': 'One', 'Last Name': 'Donor' },
-          { Donor: 'D2', 'Donation Date': '1/3/2026', 'Donation Amount': '$25.00', 'First Name': 'Two', 'Last Name': 'Donor' },
-          { Donor: 'D1', 'Donation Date': '2/2/2026', 'Donation Amount': '$50.00', 'First Name': 'One', 'Last Name': 'Donor' }
+          { Donor: 'D1', 'Donation Date': `1/2/${currentYear}`, 'Donation Amount': '$100.00', 'First Name': 'One', 'Last Name': 'Donor' },
+          { Donor: 'D2', 'Donation Date': 'TBA', 'Donation Amount': '$50.00', 'First Name': 'Two', 'Last Name': 'Donor' }
         ],
         errors: [], meta: parseMeta
       }, undefined)
@@ -234,15 +380,18 @@ describe('Donations Summary Dashboard', () => {
 
     fireEvent.click(screen.getByText('Copy Sheet TSV'))
 
+    const emptyMonthCount = Math.max(0, expectedMonths.length - 1)
+    const zeroes = Array(emptyMonthCount).fill('0')
+    const zeroCurrency = Array(emptyMonthCount).fill('$0.00')
     expect(writeText).toHaveBeenCalledWith([
-      'Metric\tJanuary 2026\tFebruary 2026\tAll',
-      'Total donors this month\t2\t1\t2',
-      'Median donation amount\t$62.50\t$50.00\t$50.00',
-      'Total donation amount\t$125.00\t$50.00\t$175.00',
-      'Gifts $50 and under\t1\t1\t2',
-      'Gifts $50 - $100\t1\t0\t1',
-      'Gifts $100 - $500\t0\t0\t0',
-      'Gifts over $500\t0\t0\t0'
+      `Metric\t${[...expectedMonths, 'Unknown Date', 'All'].join('\t')}`,
+      `Total donors this month\t${['1', ...zeroes, '1', '2'].join('\t')}`,
+      `Median donation amount\t${['$100.00', ...zeroCurrency, '$50.00', '$75.00'].join('\t')}`,
+      `Total donation amount\t${['$100.00', ...zeroCurrency, '$50.00', '$150.00'].join('\t')}`,
+      `Gifts $50 and under\t${['0', ...zeroes, '1', '1'].join('\t')}`,
+      `Gifts $50 - $100\t${['1', ...zeroes, '0', '1'].join('\t')}`,
+      `Gifts $100 - $500\t${[...Array(expectedMonths.length).fill('0'), '0', '0'].join('\t')}`,
+      `Gifts over $500\t${[...Array(expectedMonths.length).fill('0'), '0', '0'].join('\t')}`
     ].join('\n'))
   })
 })
