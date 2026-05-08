@@ -200,4 +200,49 @@ describe('Donations Summary Dashboard', () => {
       expect(screen.getByText('Mid Two')).toBeInTheDocument()
     })
   })
+
+  it('copies a Google Sheets friendly monthly TSV summary', async () => {
+    const writeText = vi.fn()
+    Object.assign(navigator, {
+      clipboard: { writeText }
+    })
+    vi.spyOn(window, 'alert').mockImplementation(() => {})
+
+    render(<App />)
+    const donorExport = new File(['donors'], 'donors.csv', { type: 'text/csv' })
+    const input = screen.getByLabelText(/Upload CSV/i)
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((_file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+
+      config.complete({
+        data: [
+          { Donor: 'D1', 'Donation Date': '1/2/2026', 'Donation Amount': '$100.00', 'First Name': 'One', 'Last Name': 'Donor' },
+          { Donor: 'D2', 'Donation Date': '1/3/2026', 'Donation Amount': '$25.00', 'First Name': 'Two', 'Last Name': 'Donor' },
+          { Donor: 'D1', 'Donation Date': '2/2/2026', 'Donation Amount': '$50.00', 'First Name': 'One', 'Last Name': 'Donor' }
+        ],
+        errors: [], meta: parseMeta
+      }, undefined)
+    })
+
+    fireEvent.change(input, { target: { files: [donorExport] } })
+
+    await waitFor(() => {
+      expect(screen.getByText('Copy Sheet TSV')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByText('Copy Sheet TSV'))
+
+    expect(writeText).toHaveBeenCalledWith([
+      'Metric\tJanuary 2026\tFebruary 2026\tAll',
+      'Total donors this month\t2\t1\t2',
+      'Median donation amount\t$62.50\t$50.00\t$50.00',
+      'Total donation amount\t$125.00\t$50.00\t$175.00',
+      'Gifts $50 and under\t1\t1\t2',
+      'Gifts $50 - $100\t1\t0\t1',
+      'Gifts $100 - $500\t0\t0\t0',
+      'Gifts over $500\t0\t0\t0'
+    ].join('\n'))
+  })
 })

@@ -37,6 +37,18 @@ interface DonorSummary {
   segment: Exclude<DonorFilter, 'all' | 'repeat'>;
 }
 
+interface SheetSummaryColumn {
+  label: string;
+  totalDonors: number;
+  medianDonation: number;
+  totalAmount: number;
+  giftsUnder50: number;
+  gifts50to100: number;
+  gifts100to500: number;
+  giftsOver500: number;
+  sortValue: number;
+}
+
 const donorFilters: Array<{ id: DonorFilter; label: string }> = [
   { id: 'all', label: 'All donors' },
   { id: 'major', label: 'Major donors' },
@@ -60,6 +72,21 @@ const defaultLevelThresholds: LevelThresholds = {
   mid: 250,
   core: 100,
 };
+
+const monthNames = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
 
 const parseDonationFile = (file: File) => {
   return new Promise<DonationRow[]>((resolve, reject) => {
@@ -97,6 +124,88 @@ const getDateSortValue = (date: string) => {
 
 const formatCurrency = (amount: number) => {
   return '$' + amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+const getMedian = (amounts: number[]) => {
+  if (amounts.length === 0) return 0;
+
+  const sortedAmounts = [...amounts].sort((a, b) => a - b);
+  const middle = Math.floor(sortedAmounts.length / 2);
+  return sortedAmounts.length % 2 !== 0
+    ? sortedAmounts[middle]
+    : (sortedAmounts[middle - 1] + sortedAmounts[middle]) / 2;
+};
+
+const getMonthBucket = (date: string) => {
+  const parsedDate = new Date(date);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return { key: 'unknown', label: 'Unknown Date', sortValue: Number.MAX_SAFE_INTEGER };
+  }
+
+  const year = parsedDate.getFullYear();
+  const month = parsedDate.getMonth();
+  return {
+    key: `${year}-${String(month + 1).padStart(2, '0')}`,
+    label: `${monthNames[month]} ${year}`,
+    sortValue: new Date(year, month, 1).getTime(),
+  };
+};
+
+const summarizeSheetColumn = (label: string, donations: ParsedDonation[], sortValue: number): SheetSummaryColumn => {
+  const donorIds = new Set(donations.map(donation => donation.donorKey).filter(Boolean));
+  const amounts = donations.map(donation => donation.amount);
+
+  return {
+    label,
+    totalDonors: donorIds.size,
+    medianDonation: getMedian(amounts),
+    totalAmount: amounts.reduce((sum, amount) => sum + amount, 0),
+    giftsUnder50: donations.filter(donation => donation.amount <= 50).length,
+    gifts50to100: donations.filter(donation => donation.amount > 50 && donation.amount <= 100).length,
+    gifts100to500: donations.filter(donation => donation.amount > 100 && donation.amount <= 500).length,
+    giftsOver500: donations.filter(donation => donation.amount > 500).length,
+    sortValue,
+  };
+};
+
+const buildSheetSummaryColumns = (donations: ParsedDonation[]) => {
+  const monthGroups = donations.reduce((acc, donation) => {
+    const monthBucket = getMonthBucket(donation.date);
+    if (!acc[monthBucket.key]) {
+      acc[monthBucket.key] = {
+        label: monthBucket.label,
+        sortValue: monthBucket.sortValue,
+        donations: [],
+      };
+    }
+
+    acc[monthBucket.key].donations.push(donation);
+    return acc;
+  }, {} as Record<string, { label: string; sortValue: number; donations: ParsedDonation[] }>);
+
+  const monthColumns = Object.values(monthGroups)
+    .map(group => summarizeSheetColumn(group.label, group.donations, group.sortValue))
+    .sort((a, b) => a.sortValue - b.sortValue);
+
+  return [
+    ...monthColumns,
+    summarizeSheetColumn('All', donations, Number.MAX_SAFE_INTEGER + 1),
+  ];
+};
+
+const buildGoogleSheetsTsv = (columns: SheetSummaryColumn[]) => {
+  const rows = [
+    ['Metric', ...columns.map(column => column.label)],
+    ['Total donors this month', ...columns.map(column => column.totalDonors.toString())],
+    ['Median donation amount', ...columns.map(column => formatCurrency(column.medianDonation))],
+    ['Total donation amount', ...columns.map(column => formatCurrency(column.totalAmount))],
+    ['Gifts $50 and under', ...columns.map(column => column.giftsUnder50.toString())],
+    ['Gifts $50 - $100', ...columns.map(column => column.gifts50to100.toString())],
+    ['Gifts $100 - $500', ...columns.map(column => column.gifts100to500.toString())],
+    ['Gifts over $500', ...columns.map(column => column.giftsOver500.toString())],
+  ];
+
+  return rows.map(row => row.join('\t')).join('\n');
 };
 
 const getDonorSegment = (amount: number, thresholds: LevelThresholds): DonorSummary['segment'] => {
@@ -236,12 +345,11 @@ const App = () => {
 
     const donorSummaries = summarizeDonors(parsedData, levelThresholds);
     const totalDonors = donorSummaries.length;
-    const amounts = parsedData.map(d => d.amount).sort((a, b) => a - b);
-    const MathMid = Math.floor(amounts.length / 2);
-    const median = amounts.length === 0 ? 0 : (amounts.length % 2 !== 0 ? amounts[MathMid] : (amounts[MathMid - 1] + amounts[MathMid]) / 2);
+    const amounts = parsedData.map(d => d.amount);
+    const median = getMedian(amounts);
     const totalAmount = parsedData.reduce((sum, d) => sum + d.amount, 0);
     const repeatDonors = donorSummaries.filter(donor => donor.giftCount > 1).length;
-    const largestGift = amounts[amounts.length - 1] ?? 0;
+    const largestGift = Math.max(...amounts, 0);
 
     const trendsByDate = parsedData.reduce((acc, curr) => {
       const date = curr.date;
@@ -287,6 +395,7 @@ const App = () => {
       donorSummaries,
       giftLevelData,
       donorLevelData,
+      sheetSummaryColumns: buildSheetSummaryColumns(parsedData),
     };
 
   }, [levelThresholds, parsedData]);
@@ -333,6 +442,13 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
     alert('Summary copied to clipboard!');
   };
 
+  const copySheetSummaryToClipboard = () => {
+    if (!stats) return;
+
+    navigator.clipboard.writeText(buildGoogleSheetsTsv(stats.sheetSummaryColumns));
+    alert('Google Sheets summary copied to clipboard!');
+  };
+
   const printReport = () => {
     window.print();
   };
@@ -357,6 +473,10 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                 <button onClick={copyTableToClipboard} className="flex items-center gap-2 bg-white border border-neutral-300 px-4 py-2 rounded-lg hover:bg-neutral-50 transition shadow-sm font-medium">
                   <Copy className="w-5 h-5" />
                   <span>Copy</span>
+                </button>
+                <button onClick={copySheetSummaryToClipboard} className="flex items-center gap-2 bg-white border border-neutral-300 px-4 py-2 rounded-lg hover:bg-neutral-50 transition shadow-sm font-medium">
+                  <Copy className="w-5 h-5" />
+                  <span>Copy Sheet TSV</span>
                 </button>
                 <button onClick={printReport} className="flex items-center gap-2 bg-white border border-neutral-300 px-4 py-2 rounded-lg hover:bg-neutral-50 transition shadow-sm font-medium">
                   <FileText className="w-5 h-5" />
