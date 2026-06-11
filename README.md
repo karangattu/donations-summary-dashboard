@@ -1,12 +1,12 @@
-# Donations Summary Dashboard
+# Donors Summary Dashboard
 
-A React application for processing one or more donation CSV files entirely in the browser.
+A React application for processing and summarizing donation CSV files entirely in the browser.
 
-Features:
+## Getting Started
 
-- Total Donor metrics
-- Median Donation tracking
-- Dynamic gift breakdown sizing
-- Interactive donation trends chart
-- Print and Clipboard export capabilities
-- Private by design; data never leaves the browser.
+```bash
+npm install
+npm run dev
+npm run build
+npm test
+```
