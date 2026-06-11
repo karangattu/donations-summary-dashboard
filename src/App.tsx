@@ -449,8 +449,6 @@ const App = () => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [activeTab, setActiveTab] = useState<'donors' | 'records'>('donors');
-  const [loadingDemo, setLoadingDemo] = useState(false);
-
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
@@ -463,37 +461,6 @@ const App = () => {
     } catch (error) {
       console.error('Failed to parse donation CSV', error);
       alert('Unable to parse one or more CSV files.');
-    }
-  };
-
-  const handleLoadDemoData = async () => {
-    setLoadingDemo(true);
-    try {
-      const baseUrl = import.meta.env.BASE_URL;
-      const csvUrl = `${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}demo-donations.csv`;
-      const response = await fetch(csvUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch demo data: ${response.statusText}`);
-      }
-      const csvText = await response.text();
-      Papa.parse<DonationRow>(csvText, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (results) => {
-          setData(results.data);
-          setFileName('Demo Dataset');
-          setLoadingDemo(false);
-        },
-        error: (error: unknown) => {
-          console.error(error);
-          alert('Unable to parse demo CSV data.');
-          setLoadingDemo(false);
-        }
-      });
-    } catch (error) {
-      console.error('Failed to load demo CSV', error);
-      alert('Unable to load demo CSV file.');
-      setLoadingDemo(false);
     }
   };
 
@@ -1118,7 +1085,7 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                 No data uploaded
               </h2>
               <p className="mt-4 text-base text-neutral-500 leading-relaxed">
-                Visualize donor behavior, track monthly trends, and export structured summaries easily. Get started by uploading your donation CSV records or loading our demo dataset.
+                Get started by uploading your donation CSV records.
               </p>
 
               <div className="mt-8 flex flex-col sm:flex-row gap-3 w-full justify-center">
@@ -1127,20 +1094,6 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                   <span>Select CSV Files</span>
                   <input type="file" accept=".csv" multiple onChange={handleFileUpload} className="hidden" />
                 </label>
-                
-                <button
-                  type="button"
-                  onClick={handleLoadDemoData}
-                  disabled={loadingDemo}
-                  className="flex items-center justify-center gap-2 bg-white border border-neutral-300 px-6 py-3 rounded-xl hover:border-neutral-400 active:scale-95 transition-all duration-200 font-semibold shadow-sm text-neutral-700 disabled:opacity-50"
-                >
-                  {loadingDemo ? (
-                    <div className="w-5 h-5 border-2 border-neutral-400 border-t-neutral-800 rounded-full animate-spin" />
-                  ) : (
-                    <FileText className="w-4.5 h-4.5 text-indigo-500" />
-                  )}
-                  <span>{loadingDemo ? 'Loading Demo...' : 'Load Demo Data'}</span>
-                </button>
               </div>
 
               <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-6 text-left border-t border-neutral-100 pt-8 w-full">
