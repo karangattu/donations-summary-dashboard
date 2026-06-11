@@ -158,7 +158,7 @@ describe('Donations Summary Dashboard', () => {
       expect(screen.getAllByText('$175.00').length).toBeGreaterThan(0)
       expect(within(screen.getByText('Total Gifts').parentElement!).getByText('3')).toBeInTheDocument()
       expect(within(screen.getByText('Total Donors').parentElement!).getByText('2')).toBeInTheDocument()
-      expect(screen.getByText('Ada One')).toBeInTheDocument()
+      expect(screen.getAllByText('Ada One').length).toBeGreaterThan(0)
     })
   })
 
@@ -187,22 +187,24 @@ describe('Donations Summary Dashboard', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Donor Investigation Table')).toBeInTheDocument()
-      expect(screen.getByText('Major One')).toBeInTheDocument()
-      expect(screen.getByText('Entry Four')).toBeInTheDocument()
+      expect(screen.getAllByText('Major One').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('Entry Four').length).toBeGreaterThan(0)
     })
 
     fireEvent.click(screen.getByRole('button', { name: /Major donors/i }))
 
     await waitFor(() => {
-      expect(screen.getByText('Major One')).toBeInTheDocument()
-      expect(screen.queryByText('Entry Four')).not.toBeInTheDocument()
+      const donorTable = screen.getByText('Donor Investigation Table').closest('section')!
+      expect(within(donorTable).getAllByText('Major One').length).toBeGreaterThan(0)
+      expect(within(donorTable).queryByText('Entry Four')).not.toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole('button', { name: /Repeat donors/i }))
 
     await waitFor(() => {
-      expect(screen.getByText('Entry Four')).toBeInTheDocument()
-      expect(screen.queryByText('Major One')).not.toBeInTheDocument()
+      const donorTable = screen.getByText('Donor Investigation Table').closest('section')!
+      expect(within(donorTable).getByText('Entry Four')).toBeInTheDocument()
+      expect(within(donorTable).queryByText('Major One')).not.toBeInTheDocument()
     })
   })
 
@@ -227,7 +229,7 @@ describe('Donations Summary Dashboard', () => {
     fireEvent.change(input, { target: { files: [donorExport] } })
 
     await waitFor(() => {
-      expect(screen.getByText('Major One')).toBeInTheDocument()
+      expect(screen.getAllByText('Major One').length).toBeGreaterThan(0)
       expect(screen.getByLabelText('Major minimum')).toHaveValue(1000)
     })
 
@@ -236,14 +238,16 @@ describe('Donations Summary Dashboard', () => {
 
     await waitFor(() => {
       expect(screen.getByText('No donors match the current filters.')).toBeInTheDocument()
-      expect(screen.queryByText('Major One')).not.toBeInTheDocument()
+      const donorTable = screen.getByText('Donor Investigation Table').closest('section')!
+      expect(within(donorTable).queryByText('Major One')).not.toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole('button', { name: /Mid-level/i }))
 
     await waitFor(() => {
-      expect(screen.getByText('Major One')).toBeInTheDocument()
-      expect(screen.getByText('Mid Two')).toBeInTheDocument()
+      const donorTable = screen.getByText('Donor Investigation Table').closest('section')!
+      expect(within(donorTable).getByText('Major One')).toBeInTheDocument()
+      expect(within(donorTable).getByText('Mid Two')).toBeInTheDocument()
     })
   })
 
@@ -272,8 +276,8 @@ describe('Donations Summary Dashboard', () => {
 
     await waitFor(() => {
       expect(screen.getAllByText('$1,000.00').length).toBeGreaterThan(0)
-      expect(screen.getByText('January Donor')).toBeInTheDocument()
-      expect(screen.getByText('March End')).toBeInTheDocument()
+      expect(screen.getAllByText('January Donor').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('March End').length).toBeGreaterThan(0)
     })
 
     fireEvent.change(screen.getByLabelText('Timeline type'), { target: { value: 'month' } })
@@ -282,7 +286,7 @@ describe('Donations Summary Dashboard', () => {
     await waitFor(() => {
       expect(screen.getAllByText('$200.00').length).toBeGreaterThan(0)
       expect(within(screen.getByText('Total Gifts').parentElement!).getByText('1')).toBeInTheDocument()
-      expect(screen.getByText('February Donor')).toBeInTheDocument()
+      expect(screen.getAllByText('February Donor').length).toBeGreaterThan(0)
       expect(screen.queryByText('January Donor')).not.toBeInTheDocument()
       expect(screen.queryByText('March Start')).not.toBeInTheDocument()
     })
@@ -294,9 +298,55 @@ describe('Donations Summary Dashboard', () => {
     await waitFor(() => {
       expect(screen.getAllByText('$300.00').length).toBeGreaterThan(0)
       expect(within(screen.getByText('Total Gifts').parentElement!).getByText('1')).toBeInTheDocument()
-      expect(screen.getByText('March Start')).toBeInTheDocument()
+      expect(screen.getAllByText('March Start').length).toBeGreaterThan(0)
       expect(screen.queryByText('February Donor')).not.toBeInTheDocument()
       expect(screen.queryByText('March End')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows all individual records in the All Records table and filters by month', async () => {
+    render(<App />)
+    const donorExport = new File(['donors'], 'records.csv', { type: 'text/csv' })
+    const input = screen.getByLabelText(/Upload CSV/i)
+    const currentYear = new Date().getFullYear()
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((_file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+
+      config.complete({
+        data: [
+          { Donor: 'J1', 'Donation Date': `1/5/${currentYear}`, 'Donation Amount': '$100.00', 'First Name': 'January', 'Last Name': 'Donor', City: 'Austin', St: 'TX' },
+          { Donor: 'F1', 'Donation Date': `2/10/${currentYear}`, 'Donation Amount': '$200.00', 'First Name': 'February', 'Last Name': 'Donor', City: 'Dallas', St: 'TX' },
+          { Donor: 'M1', 'Donation Date': `3/5/${currentYear}`, 'Donation Amount': '$300.00', 'First Name': 'March', 'Last Name': 'Start', City: 'Houston', St: 'TX' },
+          { Donor: 'M2', 'Donation Date': `3/20/${currentYear}`, 'Donation Amount': '$400.00', 'First Name': 'March', 'Last Name': 'End', City: 'Austin', St: 'TX' }
+        ],
+        errors: [], meta: parseMeta
+      }, undefined)
+    })
+
+    fireEvent.change(input, { target: { files: [donorExport] } })
+
+    await waitFor(() => {
+      expect(screen.getByText('All Records')).toBeInTheDocument()
+      expect(screen.getByText('4 individual donations in selected timeline')).toBeInTheDocument()
+      const recordsTable = screen.getByText('All Records').closest('section')!
+      expect(within(recordsTable).getByText('January Donor')).toBeInTheDocument()
+      expect(within(recordsTable).getByText('February Donor')).toBeInTheDocument()
+      expect(within(recordsTable).getByText('March Start')).toBeInTheDocument()
+      expect(within(recordsTable).getByText('March End')).toBeInTheDocument()
+    })
+
+    fireEvent.change(screen.getByLabelText('Timeline type'), { target: { value: 'month' } })
+    fireEvent.change(screen.getByLabelText('Month'), { target: { value: `${currentYear}-03` } })
+
+    await waitFor(() => {
+      expect(screen.getByText('2 individual donations in selected timeline')).toBeInTheDocument()
+      const recordsTable = screen.getByText('All Records').closest('section')!
+      expect(within(recordsTable).getByText('March Start')).toBeInTheDocument()
+      expect(within(recordsTable).getByText('March End')).toBeInTheDocument()
+      expect(within(recordsTable).queryByText('January Donor')).not.toBeInTheDocument()
+      expect(within(recordsTable).queryByText('February Donor')).not.toBeInTheDocument()
     })
   })
 

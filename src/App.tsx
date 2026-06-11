@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import Papa from 'papaparse';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { Upload, Copy, FileText, DollarSign, Users, Gift, Search, CalendarDays } from 'lucide-react';
+import { Upload, Copy, FileText, DollarSign, Users, Gift, Search, CalendarDays, List } from 'lucide-react';
 
 type DonationRow = Record<string, string | undefined>;
 type DonorFilter = 'all' | 'major' | 'mid' | 'core' | 'entry' | 'repeat';
@@ -553,6 +553,24 @@ const App = () => {
     });
   }, [activeFilter, searchTerm, stats]);
 
+  const sortedRecords = useMemo(() => {
+    return [...timelineData].sort((a, b) => {
+      if (a.dateSortValue === b.dateSortValue) return b.amount - a.amount;
+      return a.dateSortValue - b.dateSortValue;
+    });
+  }, [timelineData]);
+
+  const copyRecordsToClipboard = () => {
+    if (sortedRecords.length === 0) return;
+
+    const header = 'Date\tDonor\tAmount\tCity\tState';
+    const rows = sortedRecords.map(record =>
+      `${record.date}\t${record.donorName}\t${formatCurrency(record.amount)}\t${record.city}\t${record.state}`
+    );
+    navigator.clipboard.writeText([header, ...rows].join('\n'));
+    alert('All records copied to clipboard!');
+  };
+
   const copyTableToClipboard = () => {
     if (!stats) return;
     
@@ -935,6 +953,62 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                 </div>
               </section>
             </div>
+
+            <section className="bg-white rounded-lg shadow-sm border border-neutral-200 overflow-hidden">
+              <div className="p-6 border-b border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-blue-50 rounded-lg mt-0.5">
+                    <List className="w-4 h-4 text-blue-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">All Records</h3>
+                    <p className="text-sm text-neutral-500 mt-1">
+                      {sortedRecords.length} individual donation{sortedRecords.length !== 1 ? 's' : ''} in selected timeline
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={copyRecordsToClipboard}
+                  disabled={sortedRecords.length === 0}
+                  className="flex items-center gap-2 bg-white border border-neutral-300 px-3 py-2 rounded-lg hover:bg-neutral-50 transition shadow-sm text-sm font-medium disabled:opacity-50"
+                >
+                  <Copy className="w-4 h-4" />
+                  <span>Copy TSV</span>
+                </button>
+              </div>
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-neutral-50 text-neutral-500 border-b border-neutral-200 sticky top-0">
+                    <tr>
+                      <th className="text-left font-semibold px-6 py-3">Date</th>
+                      <th className="text-left font-semibold px-4 py-3">Donor</th>
+                      <th className="text-right font-semibold px-4 py-3">Amount</th>
+                      <th className="text-left font-semibold px-4 py-3">City</th>
+                      <th className="text-left font-semibold px-4 py-3">State</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {sortedRecords.map((record, index) => (
+                      <tr key={`${record.donorKey}-${record.date}-${record.amount}-${index}`} className="hover:bg-neutral-50">
+                        <td className="px-6 py-2 whitespace-nowrap text-neutral-700">{record.date}</td>
+                        <td className="px-4 py-2">
+                          <div className="font-semibold text-neutral-900">{record.donorName}</div>
+                          <div className="text-xs text-neutral-500">{record.donorKey}</div>
+                        </td>
+                        <td className="px-4 py-2 text-right font-semibold">{formatCurrency(record.amount)}</td>
+                        <td className="px-4 py-2 text-neutral-600">{record.city || '—'}</td>
+                        <td className="px-4 py-2 text-neutral-600">{record.state || '—'}</td>
+                      </tr>
+                    ))}
+                    {sortedRecords.length === 0 && (
+                      <tr>
+                        <td className="px-6 py-8 text-center text-neutral-500" colSpan={5}>No records in the selected timeline.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center p-20 bg-white rounded-xl shadow-sm border border-neutral-200 border-dashed print:hidden">
