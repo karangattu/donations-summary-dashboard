@@ -979,8 +979,14 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                             <td className="px-6 py-3.5 min-w-56">
                               <div className="font-bold text-neutral-950">{donor.name}</div>
                               <div className="text-xs text-neutral-400 mt-0.5 font-medium">
-                                {donor.key}
-                                {donor.city ? ` · ${donor.city}${donor.state ? `, ${donor.state}` : ''}` : ''}
+                                {donor.key !== donor.name ? (
+                                  <>
+                                    <span>{donor.key}</span>
+                                    {donor.city ? ` · ${donor.city}${donor.state ? `, ${donor.state}` : ''}` : ''}
+                                  </>
+                                ) : (
+                                  donor.city ? `${donor.city}${donor.state ? `, ${donor.state}` : ''}` : ''
+                                )}
                               </div>
                             </td>
                             <td className="px-4 py-3.5 text-right font-bold text-neutral-900">{formatCurrency(donor.totalAmount)}</td>
@@ -1051,7 +1057,9 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                             <td className="px-6 py-3.5 whitespace-nowrap text-neutral-600 font-medium">{record.date}</td>
                             <td className="px-4 py-3.5">
                               <div className="font-bold text-neutral-900">{record.donorName}</div>
-                              <div className="text-xs text-neutral-400 mt-0.5 font-medium">{record.donorKey}</div>
+                              {record.donorKey !== record.donorName && (
+                                <div className="text-xs text-neutral-400 mt-0.5 font-medium">{record.donorKey}</div>
+                              )}
                             </td>
                             <td className="px-4 py-3.5 text-right font-bold text-neutral-900">{formatCurrency(record.amount)}</td>
                             <td className="px-4 py-3.5 text-neutral-500 font-medium">{record.city || '—'}</td>
