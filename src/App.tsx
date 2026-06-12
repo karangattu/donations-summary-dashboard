@@ -22,6 +22,7 @@ interface ParsedDonation {
   donorName: string;
   city: string;
   state: string;
+  notes: string;
 }
 
 interface DonorSummary {
@@ -36,6 +37,7 @@ interface DonorSummary {
   firstGift: string;
   lastGift: string;
   segment: Exclude<DonorFilter, 'all' | 'repeat'>;
+  notes: string;
 }
 
 interface SheetSummaryColumn {
@@ -373,6 +375,7 @@ const normalizeDonation = (row: DonationRow): ParsedDonation => {
   const donorKey = donorId || email || donorName;
   const date = getFieldValue(row, ['Transaction Date', 'Donation Date']) || 'Unknown Date';
   const amount = parseCurrency(getFieldValue(row, ['Transaction Amount Subtotal', 'Donation Amount']));
+  const notes = getFieldValue(row, ['Notes/Interactions', 'Notes', 'Interactions']);
 
   return {
     amount,
@@ -382,6 +385,7 @@ const normalizeDonation = (row: DonationRow): ParsedDonation => {
     donorName,
     city: getFieldValue(row, ['City']),
     state: getFieldValue(row, ['St', 'ST', 'State']),
+    notes,
   };
 };
 
@@ -401,6 +405,7 @@ const summarizeDonors = (donations: ParsedDonation[], thresholds: LevelThreshold
       firstGiftSortValue: donation.dateSortValue,
       lastGiftSortValue: donation.dateSortValue,
       segment: 'entry' as DonorSummary['segment'],
+      notesList: [] as string[],
     };
 
     existing.giftCount += 1;
@@ -419,9 +424,15 @@ const summarizeDonors = (donations: ParsedDonation[], thresholds: LevelThreshold
 
     existing.city ||= donation.city;
     existing.state ||= donation.state;
+    if (donation.notes) {
+      const trimmedNote = donation.notes.trim();
+      if (trimmedNote && !existing.notesList.includes(trimmedNote)) {
+        existing.notesList.push(trimmedNote);
+      }
+    }
     acc[donation.donorKey] = existing;
     return acc;
-  }, {} as Record<string, DonorSummary & { firstGiftSortValue: number; lastGiftSortValue: number }>);
+  }, {} as Record<string, Omit<DonorSummary, 'notes'> & { firstGiftSortValue: number; lastGiftSortValue: number; notesList: string[] }>);
 
   return Object.values(donors).map((donor) => ({
     key: donor.key,
@@ -435,6 +446,7 @@ const summarizeDonors = (donations: ParsedDonation[], thresholds: LevelThreshold
     firstGift: donor.firstGift,
     lastGift: donor.lastGift,
     segment: getDonorSegment(donor.totalAmount, thresholds),
+    notes: donor.notesList.join('; '),
   })).sort((a, b) => b.totalAmount - a.totalAmount || b.giftCount - a.giftCount);
 };
 
@@ -988,6 +1000,11 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                                   donor.city ? `${donor.city}${donor.state ? `, ${donor.state}` : ''}` : ''
                                 )}
                               </div>
+                              {donor.notes && (
+                                <div className="text-xs text-neutral-600 mt-1 italic font-medium bg-neutral-50 border border-neutral-200 rounded-md px-2 py-0.5 max-w-xs md:max-w-md break-words">
+                                  {donor.notes}
+                                </div>
+                              )}
                             </td>
                             <td className="px-4 py-3.5 text-right font-bold text-neutral-900">{formatCurrency(donor.totalAmount)}</td>
                             <td className="px-4 py-3.5 text-right font-semibold text-neutral-600">{donor.giftCount}</td>
@@ -1059,6 +1076,11 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                               <div className="font-bold text-neutral-900">{record.donorName}</div>
                               {record.donorKey !== record.donorName && (
                                 <div className="text-xs text-neutral-400 mt-0.5 font-medium">{record.donorKey}</div>
+                              )}
+                              {record.notes && (
+                                <div className="text-xs text-neutral-600 mt-1 italic font-medium bg-neutral-50 border border-neutral-200 rounded-md px-2 py-0.5 max-w-xs md:max-w-md break-words">
+                                  {record.notes}
+                                </div>
                               )}
                             </td>
                             <td className="px-4 py-3.5 text-right font-bold text-neutral-900">{formatCurrency(record.amount)}</td>

@@ -492,4 +492,40 @@ describe('Donations Summary Dashboard', () => {
     expect(rows[0].split('\t')).not.toContain('Unknown Date')
     expect(rows[0].split('\t')).not.toContain('All')
   })
+
+  it('parses and displays Notes/Interactions under the donor name', async () => {
+    render(<App />)
+    const file = new File(['test'], 'test.csv', { type: 'text/csv' })
+    const input = screen.getByLabelText(/Upload CSV/i)
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((_file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (config.complete) {
+        config.complete({
+          data: [
+            { 'Contact ID': '1', 'Transaction Date': '4/1/2026', 'Transaction Amount Subtotal': '$100.00', 'First Name': 'John', 'Last Name': 'Doe', 'Notes/Interactions': 'Interested in major giving' },
+            { 'Contact ID': '2', 'Transaction Date': '4/2/2026', 'Transaction Amount Subtotal': '$25.00', 'First Name': 'Jane', 'Last Name': 'Smith', 'Notes/Interactions': '' }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      }
+    })
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByText('Donor Investigation Table')).toBeInTheDocument()
+    })
+
+    const donorTable = screen.getByText('Donor Investigation Table').closest('section')!
+    expect(within(donorTable).getByText('John Doe')).toBeInTheDocument()
+    expect(within(donorTable).getByText('Interested in major giving')).toBeInTheDocument()
+
+    const allRecordsTab = screen.getByRole('button', { name: /all records/i })
+    fireEvent.click(allRecordsTab)
+
+    const recordsTable = screen.getByText('All Records').closest('section')!
+    expect(within(recordsTable).getByText('John Doe')).toBeInTheDocument()
+    expect(within(recordsTable).getByText('Interested in major giving')).toBeInTheDocument()
+  })
 })
