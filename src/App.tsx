@@ -1353,6 +1353,8 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                         label={level.name}
                         count={level.donors}
                         total={stats.totalDonors}
+                        amount={level.amount}
+                        revenueTotal={stats.totalAmount}
                         detail={`${getDonorLevelRange(level.id, levelThresholds)} · ${formatCurrency(level.amount)}`}
                       />
                     ))}
@@ -1840,17 +1842,23 @@ const StatCard = ({ title, value, icon }: { title: string, value: string, icon: 
   </div>
 );
 
-const BreakdownRow = ({ label, count, total, detail }: { label: string, count: number, total: number, detail?: string }) => {
+const BreakdownRow = ({ label, count, total, amount, revenueTotal, detail }: { label: string, count: number, total: number, amount?: number, revenueTotal?: number, detail?: string }) => {
   const percentage = total > 0 ? (count / total) * 100 : 0;
+  const revenuePercentage = amount !== undefined && revenueTotal !== undefined && revenueTotal > 0
+    ? (amount / revenueTotal) * 100
+    : null;
   return (
     <div>
       <div className="flex justify-between text-sm mb-1.5">
         <span className="font-semibold text-neutral-700">{label}</span>
         <span className="font-bold text-neutral-900">
-          {count} <span className="text-neutral-400 font-medium">({percentage.toFixed(1)}%)</span>
+          {count} <span className="text-neutral-400 font-medium">({percentage.toFixed(1)}% of donors)</span>
         </span>
       </div>
-      {detail ? <div className="text-xs text-neutral-400 mb-2 font-medium">{detail}</div> : null}
+      {detail ? <div className="text-xs text-neutral-400 mb-2 font-medium">
+        {detail}
+        {revenuePercentage !== null && <span className="text-neutral-700 font-bold"> · {revenuePercentage.toFixed(1)}% of revenue</span>}
+      </div> : null}
       <div className="w-full bg-neutral-100 rounded-full h-2">
         <div className="bg-gradient-to-r from-blue-500 to-indigo-600 h-2 rounded-full transition-all duration-500" style={{ width: `${percentage}%` }}></div>
       </div>
