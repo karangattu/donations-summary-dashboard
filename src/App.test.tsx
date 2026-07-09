@@ -128,8 +128,9 @@ describe('Donations Summary Dashboard', () => {
     fireEvent.change(input, { target: { files: [marchFile, mayFile] } })
 
     await waitFor(() => {
-      expect(screen.getByText('January')).toBeInTheDocument()
-      expect(screen.getByText(currentMonthName)).toBeInTheDocument()
+      const givingTrendSection = screen.getByText('Giving Trend').closest('section')!
+      expect(within(givingTrendSection).getByText('January')).toBeInTheDocument()
+      expect(within(givingTrendSection).getByText(currentMonthName)).toBeInTheDocument()
     })
   })
 
@@ -287,8 +288,12 @@ describe('Donations Summary Dashboard', () => {
       expect(screen.getAllByText('$200.00').length).toBeGreaterThan(0)
       expect(within(screen.getByText('Total Gifts').parentElement!).getByText('1')).toBeInTheDocument()
       expect(screen.getAllByText('February Donor').length).toBeGreaterThan(0)
-      expect(screen.queryByText('January Donor')).not.toBeInTheDocument()
-      expect(screen.queryByText('March Start')).not.toBeInTheDocument()
+      const donorTable = screen.getByText('Donor Investigation Table').closest('section')!
+      const recordsTable = screen.getByText('All Records').closest('section')!
+      expect(within(donorTable).queryByText('January Donor')).not.toBeInTheDocument()
+      expect(within(donorTable).queryByText('March Start')).not.toBeInTheDocument()
+      expect(within(recordsTable).queryByText('January Donor')).not.toBeInTheDocument()
+      expect(within(recordsTable).queryByText('March Start')).not.toBeInTheDocument()
     })
 
     fireEvent.change(screen.getByLabelText('Timeline type'), { target: { value: 'range' } })
@@ -299,8 +304,12 @@ describe('Donations Summary Dashboard', () => {
       expect(screen.getAllByText('$300.00').length).toBeGreaterThan(0)
       expect(within(screen.getByText('Total Gifts').parentElement!).getByText('1')).toBeInTheDocument()
       expect(screen.getAllByText('March Start').length).toBeGreaterThan(0)
-      expect(screen.queryByText('February Donor')).not.toBeInTheDocument()
-      expect(screen.queryByText('March End')).not.toBeInTheDocument()
+      const donorTable = screen.getByText('Donor Investigation Table').closest('section')!
+      const recordsTable = screen.getByText('All Records').closest('section')!
+      expect(within(donorTable).queryByText('February Donor')).not.toBeInTheDocument()
+      expect(within(donorTable).queryByText('March End')).not.toBeInTheDocument()
+      expect(within(recordsTable).queryByText('February Donor')).not.toBeInTheDocument()
+      expect(within(recordsTable).queryByText('March End')).not.toBeInTheDocument()
     })
   })
 
@@ -527,5 +536,102 @@ describe('Donations Summary Dashboard', () => {
     const recordsTable = screen.getByText('All Records').closest('section')!
     expect(within(recordsTable).getByText('John Doe')).toBeInTheDocument()
     expect(within(recordsTable).getByText('Interested in major giving')).toBeInTheDocument()
+  })
+
+  const uploadInsightsData = async (rows: DonationRow[]) => {
+    render(<App />)
+    const file = new File(['test'], 'insights.csv', { type: 'text/csv' })
+    const input = screen.getByLabelText(/Upload CSV/i)
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((_file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+      config.complete({ data: rows, errors: [], meta: parseMeta }, undefined)
+    })
+
+    fireEvent.change(input, { target: { files: [file] } })
+    await waitFor(() => expect(screen.getByText('Insights & Patterns')).toBeInTheDocument())
+    return screen.getByText('Insights & Patterns').closest('section')!
+  }
+
+  it('renders an Insights & Patterns section with callouts and a month-over-month breakdown', async () => {
+    const currentYear = new Date().getFullYear()
+    const section = await uploadInsightsData([
+      { Donor: 'A', 'Donation Date': `1/5/${currentYear}`, 'Donation Amount': '$100.00', 'First Name': 'Alpha', 'Last Name': 'One' },
+      { Donor: 'B', 'Donation Date': `2/5/${currentYear}`, 'Donation Amount': '$300.00', 'First Name': 'Beta', 'Last Name': 'Two' },
+      { Donor: 'A', 'Donation Date': `3/5/${currentYear}`, 'Donation Amount': '$500.00', 'First Name': 'Alpha', 'Last Name': 'One' }
+    ])
+
+    expect(within(section).getByText('Peak giving month')).toBeInTheDocument()
+    expect(within(section).getByText('Month-over-month breakdown')).toBeInTheDocument()
+    expect(within(section).getByText('New donors acquired')).toBeInTheDocument()
+    expect(within(section).getByText('Strongest month-over-month growth')).toBeInTheDocument()
+  })
+
+  it('counts new vs returning donors and computes month-over-month growth', async () => {
+    const currentYear = new Date().getFullYear()
+    const section = await uploadInsightsData([
+      { Donor: 'A', 'Donation Date': `1/5/${currentYear}`, 'Donation Amount': '$100.00', 'First Name': 'Alpha', 'Last Name': 'One' },
+      { Donor: 'B', 'Donation Date': `2/5/${currentYear}`, 'Donation Amount': '$300.00', 'First Name': 'Beta', 'Last Name': 'Two' },
+      { Donor: 'A', 'Donation Date': `3/5/${currentYear}`, 'Donation Amount': '$500.00', 'First Name': 'Alpha', 'Last Name': 'One' }
+    ])
+
+    const newDonorsCard = within(section).getByTestId('new-donors')
+    expect(within(newDonorsCard).getByText('2')).toBeInTheDocument()
+
+    const growthCard = within(section).getByTestId('strongest-growth')
+    expect(within(growthCard).getByText('+200%')).toBeInTheDocument()
+
+    const rows = within(section).getAllByRole('row')
+    const februaryRow = rows.find(row => within(row).queryByText('February'))
+    expect(februaryRow).toBeTruthy()
+    expect(within(februaryRow!).getByText('+200%')).toBeInTheDocument()
+  })
+
+  it('highlights the top donor of the year in a callout and key donor card', async () => {
+    const currentYear = new Date().getFullYear()
+    const section = await uploadInsightsData([
+      { Donor: 'A', 'Donation Date': `1/5/${currentYear}`, 'Donation Amount': '$600.00', 'First Name': 'Alpha', 'Last Name': 'One' },
+      { Donor: 'B', 'Donation Date': `2/5/${currentYear}`, 'Donation Amount': '$100.00', 'First Name': 'Beta', 'Last Name': 'Two' }
+    ])
+
+    const topDonorCallout = within(section).getByTestId('top-donor')
+    expect(within(topDonorCallout).getByText('Top donor this year')).toBeInTheDocument()
+    expect(within(topDonorCallout).getByText('$600.00')).toBeInTheDocument()
+
+    const topTotalCard = within(section).getByTestId('key-donor-top-total')
+    expect(within(topTotalCard).getByText('Alpha One')).toBeInTheDocument()
+    expect(within(topTotalCard).getByText('$600.00')).toBeInTheDocument()
+  })
+
+  it('detects the longest consecutive-month giving streak', async () => {
+    const currentYear = new Date().getFullYear()
+    const section = await uploadInsightsData([
+      { Donor: 'S', 'Donation Date': `1/5/${currentYear}`, 'Donation Amount': '$50.00', 'First Name': 'Steady', 'Last Name': 'Giver' },
+      { Donor: 'S', 'Donation Date': `2/5/${currentYear}`, 'Donation Amount': '$50.00', 'First Name': 'Steady', 'Last Name': 'Giver' },
+      { Donor: 'S', 'Donation Date': `3/5/${currentYear}`, 'Donation Amount': '$50.00', 'First Name': 'Steady', 'Last Name': 'Giver' }
+    ])
+
+    const streakCallout = within(section).getByTestId('longest-streak')
+    expect(within(streakCallout).getByText('Longest giving streak')).toBeInTheDocument()
+    expect(within(streakCallout).getByText('3 months')).toBeInTheDocument()
+
+    const loyalCard = within(section).getByTestId('key-donor-loyal')
+    expect(within(loyalCard).getByText('Steady Giver')).toBeInTheDocument()
+  })
+
+  it('flags lapsed donors who gave earlier but not in the last two months', async () => {
+    const currentMonth = new Date().getMonth()
+    if (currentMonth < 2) return
+    const currentYear = new Date().getFullYear()
+    const recentMonth = currentMonth + 1
+
+    const section = await uploadInsightsData([
+      { Donor: 'L1', 'Donation Date': `1/5/${currentYear}`, 'Donation Amount': '$50.00', 'First Name': 'Lapsed', 'Last Name': 'Donor' },
+      { Donor: 'R1', 'Donation Date': `${recentMonth}/5/${currentYear}`, 'Donation Amount': '$100.00', 'First Name': 'Recent', 'Last Name': 'Donor' }
+    ])
+
+    expect(within(section).getByText(/Lapsed donors/)).toBeInTheDocument()
+    expect(within(section).getAllByText('Lapsed Donor').length).toBeGreaterThan(0)
   })
 })
