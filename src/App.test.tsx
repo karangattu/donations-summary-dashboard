@@ -634,4 +634,194 @@ describe('Donations Summary Dashboard', () => {
     expect(within(section).getByText(/Lapsed donors/)).toBeInTheDocument()
     expect(within(section).getAllByText('Lapsed Donor').length).toBeGreaterThan(0)
   })
+
+  it('matches current year donors with historical master list by name and email, and displays multi-year trend', async () => {
+    render(<App />)
+    const currentYear = new Date().getFullYear()
+
+    const currentFile = new File(['current'], 'current.csv', { type: 'text/csv' })
+    const historicalFile = new File(['historical'], 'Major donor master list skeleton.csv', { type: 'text/csv' })
+
+    const uploadCurrentInput = screen.getAllByLabelText(/Upload CSV/i)[0]
+    const uploadHistoricalInput = screen.getAllByLabelText(/Upload Master List/i)[0]
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+
+      if (file.name === 'current.csv') {
+        config.complete({
+          data: [
+            { Donor: 'M1', 'Donation Date': `4/1/${currentYear}`, 'Donation Amount': '$15,000.00', 'First Name': 'Mickey', 'Last Name': 'Mouse', Email: 'mickey@disney.com' },
+            { Donor: 'D2', 'Donation Date': `4/2/${currentYear}`, 'Donation Amount': '$500.00', 'First Name': 'Donald', 'Last Name': 'Duck', Email: 'donald@disney.com' }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      } else {
+        config.complete({
+          data: [
+            {
+              Name: 'Mickey Mouse',
+              'First gift': '2025',
+              '2022': '$0.00',
+              '2023': '$0.00',
+              '2024': '$0.00',
+              '2025': '$12,912.50',
+              'Notes about the donor': 'VIP Major Donor',
+              Email: 'mickey@disney.com',
+              City: 'San Francisco',
+              Address: '4th King St',
+              Phone: '555-0100'
+            }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      }
+    })
+
+    fireEvent.change(uploadCurrentInput, { target: { files: [currentFile] } })
+    fireEvent.change(uploadHistoricalInput, { target: { files: [historicalFile] } })
+
+    await waitFor(() => {
+      expect(screen.getByText('Historical & Multi-Year Trends')).toBeInTheDocument()
+      expect(screen.getByText(/1 of 2 active donors matched/)).toBeInTheDocument()
+      expect(screen.getByText('Multi-Year Revenue Trajectory')).toBeInTheDocument()
+    })
+
+    const donorTable = screen.getByText('Donor Investigation Table').closest('section')!
+    expect(within(donorTable).getByText('Mickey Mouse')).toBeInTheDocument()
+    expect(within(donorTable).getByText('Upgraded (+16%)')).toBeInTheDocument()
+    expect(within(donorTable).getByText(`New in ${currentYear}`)).toBeInTheDocument()
+  })
+
+  it('expands donor row to reveal full multi-year history, historical notes, and contact info', async () => {
+    render(<App />)
+    const currentYear = new Date().getFullYear()
+
+    const currentFile = new File(['current'], 'current.csv', { type: 'text/csv' })
+    const historicalFile = new File(['historical'], 'master.csv', { type: 'text/csv' })
+
+    const uploadCurrentInput = screen.getAllByLabelText(/Upload CSV/i)[0]
+    const uploadHistoricalInput = screen.getAllByLabelText(/Upload Master List/i)[0]
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+
+      if (file.name === 'current.csv') {
+        config.complete({
+          data: [
+            { Donor: 'M1', 'Donation Date': `4/1/${currentYear}`, 'Donation Amount': '$15,000.00', 'First Name': 'Mickey', 'Last Name': 'Mouse', Email: 'mickey@disney.com' }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      } else {
+        config.complete({
+          data: [
+            {
+              Name: 'Mickey Mouse',
+              'First gift': '2025',
+              '2022': '$0.00',
+              '2023': '$0.00',
+              '2024': '$0.00',
+              '2025': '$12,912.50',
+              'Notes about the donor': 'Founding supporter',
+              Email: 'mickey@disney.com',
+              City: 'San Francisco',
+              Address: '4th King St',
+              Phone: '555-0100'
+            }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      }
+    })
+
+    fireEvent.change(uploadCurrentInput, { target: { files: [currentFile] } })
+    fireEvent.change(uploadHistoricalInput, { target: { files: [historicalFile] } })
+
+    await waitFor(() => {
+      expect(screen.getByText('Historical & Multi-Year Trends')).toBeInTheDocument()
+    })
+
+    const toggleButton = screen.getByLabelText('Toggle history for Mickey Mouse')
+    fireEvent.click(toggleButton)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Mickey Mouse — Giving History/)).toBeInTheDocument()
+    })
+
+    expect(screen.getAllByText(/Founding supporter/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('mickey@disney.com').length).toBeGreaterThan(0)
+    expect(screen.getByText('555-0100')).toBeInTheDocument()
+    expect(screen.getByText(/4th King St, San Francisco/)).toBeInTheDocument()
+    expect(screen.getAllByText('$12,912.50').length).toBeGreaterThan(0)
+  })
+
+  it('allows filtering by historical trajectory and switching to the Master List tab', async () => {
+    render(<App />)
+    const currentYear = new Date().getFullYear()
+
+    const currentFile = new File(['current'], 'current.csv', { type: 'text/csv' })
+    const historicalFile = new File(['historical'], 'master.csv', { type: 'text/csv' })
+
+    const uploadCurrentInput = screen.getAllByLabelText(/Upload CSV/i)[0]
+    const uploadHistoricalInput = screen.getAllByLabelText(/Upload Master List/i)[0]
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+
+      if (file.name === 'current.csv') {
+        config.complete({
+          data: [
+            { Donor: 'M1', 'Donation Date': `4/1/${currentYear}`, 'Donation Amount': '$15,000.00', 'First Name': 'Mickey', 'Last Name': 'Mouse', Email: 'mickey@disney.com' },
+            { Donor: 'D2', 'Donation Date': `4/2/${currentYear}`, 'Donation Amount': '$500.00', 'First Name': 'Donald', 'Last Name': 'Duck', Email: 'donald@disney.com' }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      } else {
+        config.complete({
+          data: [
+            {
+              Name: 'Mickey Mouse',
+              'First gift': '2025',
+              '2025': '$12,000.00',
+              Email: 'mickey@disney.com'
+            },
+            {
+              Name: 'Goofy Dog',
+              'First gift': '2023',
+              '2023': '$1,000.00',
+              Email: 'goofy@disney.com'
+            }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      }
+    })
+
+    fireEvent.change(uploadCurrentInput, { target: { files: [currentFile] } })
+    fireEvent.change(uploadHistoricalInput, { target: { files: [historicalFile] } })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Master List \(2\)/i })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Upgraded/i }))
+
+    await waitFor(() => {
+      const donorTable = screen.getByText('Donor Investigation Table').closest('section')!
+      expect(within(donorTable).getByText('Mickey Mouse')).toBeInTheDocument()
+      expect(within(donorTable).queryByText('Donald Duck')).not.toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Master List \(2\)/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Historical Master List')).toBeInTheDocument()
+      expect(screen.getByText('Goofy Dog')).toBeInTheDocument()
+      expect(screen.getByText(`Not given in ${currentYear}`)).toBeInTheDocument()
+    })
+  })
 })

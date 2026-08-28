@@ -1,10 +1,38 @@
 import React, { useState, useMemo } from 'react';
 import Papa from 'papaparse';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts';
-import { Upload, Copy, FileText, DollarSign, Users, Gift, Search, CalendarDays, Sparkles, TrendingUp, TrendingDown, Crown, Flame, UserPlus, AlertTriangle } from 'lucide-react';
+import {
+  Upload,
+  Copy,
+  FileText,
+  DollarSign,
+  Users,
+  Gift,
+  Search,
+  CalendarDays,
+  Sparkles,
+  TrendingUp,
+  TrendingDown,
+  Crown,
+  Flame,
+  UserPlus,
+  AlertTriangle,
+  History,
+  ArrowUpRight,
+  ArrowDownRight,
+  Minus,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  X,
+  Mail,
+  Phone,
+  MapPin,
+} from 'lucide-react';
 
 type DonationRow = Record<string, string | undefined>;
 type DonorFilter = 'all' | 'major' | 'mid' | 'core' | 'entry' | 'repeat';
+type HistoricalStatusFilter = 'all' | 'matched' | 'upgraded' | 're-engaged' | 'downgraded' | 'consistent' | 'new' | 'unmatched';
 type ThresholdKey = 'major' | 'mid' | 'core';
 type TimelineMode = 'all' | 'month' | 'range';
 
@@ -25,6 +53,35 @@ interface ParsedDonation {
   notes: string;
 }
 
+interface HistoricalDonor {
+  id: string;
+  name: string;
+  normalizedName: string;
+  firstGift: string;
+  yearlyAmounts: Record<number, number>;
+  notes: string;
+  email: string;
+  normalizedEmail: string;
+  city: string;
+  address: string;
+  phone: string;
+  totalHistoricalAmount: number;
+}
+
+type HistoricalTrendStatus = 'upgraded' | 'consistent' | 'downgraded' | 're-engaged' | 'new' | 'unmatched';
+
+interface DonorTrendInfo {
+  status: HistoricalTrendStatus;
+  statusLabel: string;
+  isMatched: boolean;
+  historicalDonor: HistoricalDonor | null;
+  yearlyGiving: Array<{ year: number; amount: number }>;
+  lifetimeTotal: number;
+  deltaVsPrevYear: number | null;
+  deltaPctVsPrevYear: number | null;
+  previousYearAmount: number;
+}
+
 interface DonorSummary {
   key: string;
   name: string;
@@ -38,6 +95,14 @@ interface DonorSummary {
   lastGift: string;
   segment: Exclude<DonorFilter, 'all' | 'repeat'>;
   notes: string;
+  trend: DonorTrendInfo;
+}
+
+interface MultiYearTrendPoint {
+  year: string;
+  amount: number;
+  donorCount: number;
+  isCurrentYear?: boolean;
 }
 
 interface SheetSummaryColumn {
@@ -194,6 +259,89 @@ const parseDonationFile = (file: File) => {
       skipEmptyLines: true,
       complete: (results) => {
         resolve(results.data);
+      },
+      error: (error) => {
+        reject(error);
+      },
+    });
+  });
+};
+
+const extractHistoricalYears = (rows: DonationRow[]): number[] => {
+  const yearSet = new Set<number>();
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      const trimmed = key.trim();
+      if (/^(19\d\d|20\d\d)$/.test(trimmed)) {
+        yearSet.add(Number(trimmed));
+      }
+    }
+  }
+  return Array.from(yearSet).sort((a, b) => a - b);
+};
+
+const normalizeMatchKey = (value: string): string => {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+};
+
+const parseHistoricalDonorRow = (row: DonationRow, detectedYears: number[]): HistoricalDonor | null => {
+  const name = getFieldValue(row, ['Name', 'Donor Name', 'Donor', 'Full Name']);
+  if (!name) return null;
+
+  const rawEmail = getFieldValue(row, ['Email', 'Email Address', 'E-mail']);
+  const isNa = (val: string) => !val || ['na', 'n/a', 'none', 'null', 'unknown'].includes(val.toLowerCase());
+  const normalizedEmail = isNa(rawEmail) ? '' : rawEmail.trim().toLowerCase();
+
+  const normalizedName = normalizeMatchKey(name);
+  const firstGift = getFieldValue(row, ['First gift', 'First Gift', 'First gift date', 'First Gift Date', 'First Gift Year']);
+  const rawNotes = getFieldValue(row, ['Notes about the donor', 'Notes', 'Notes/Interactions', 'Comments']);
+  const rawCity = getFieldValue(row, ['City']);
+  const rawAddress = getFieldValue(row, ['Address', 'Street Address']);
+  const rawPhone = getFieldValue(row, ['Phone', 'Phone Number']);
+
+  const yearlyAmounts: Record<number, number> = {};
+  let totalHistoricalAmount = 0;
+
+  for (const year of detectedYears) {
+    const rawVal = row[String(year)] ?? row[`${year}`] ?? '';
+    const parsed = parseCurrency(rawVal);
+    const amount = Number.isNaN(parsed) ? 0 : Math.max(0, parsed);
+    yearlyAmounts[year] = amount;
+    totalHistoricalAmount += amount;
+  }
+
+  return {
+    id: `${normalizedEmail || normalizedName}`,
+    name,
+    normalizedName,
+    firstGift: isNa(firstGift) ? '' : firstGift,
+    yearlyAmounts,
+    notes: isNa(rawNotes) ? '' : rawNotes,
+    email: normalizedEmail ? rawEmail : '',
+    normalizedEmail,
+    city: isNa(rawCity) ? '' : rawCity,
+    address: isNa(rawAddress) ? '' : rawAddress,
+    phone: isNa(rawPhone) ? '' : rawPhone,
+    totalHistoricalAmount,
+  };
+};
+
+const parseHistoricalDonorFile = (file: File) => {
+  return new Promise<HistoricalDonor[]>((resolve, reject) => {
+    Papa.parse<DonationRow>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const rows = results.data;
+        const detectedYears = extractHistoricalYears(rows);
+        const donors: HistoricalDonor[] = [];
+        for (const row of rows) {
+          const donor = parseHistoricalDonorRow(row, detectedYears);
+          if (donor) {
+            donors.push(donor);
+          }
+        }
+        resolve(donors);
       },
       error: (error) => {
         reject(error);
@@ -923,7 +1071,136 @@ const normalizeDonation = (row: DonationRow): ParsedDonation => {
   };
 };
 
-const summarizeDonors = (donations: ParsedDonation[], thresholds: LevelThresholds) => {
+const buildHistoricalIndices = (historicalDonors: HistoricalDonor[]) => {
+  const emailMap = new Map<string, HistoricalDonor>();
+  const nameMap = new Map<string, HistoricalDonor>();
+
+  for (const donor of historicalDonors) {
+    if (donor.normalizedEmail) {
+      emailMap.set(donor.normalizedEmail, donor);
+    }
+    if (donor.normalizedName) {
+      nameMap.set(donor.normalizedName, donor);
+    }
+  }
+
+  return { emailMap, nameMap };
+};
+
+const findHistoricalMatch = (
+  donor: { name: string; key: string },
+  emailMap: Map<string, HistoricalDonor>,
+  nameMap: Map<string, HistoricalDonor>,
+): HistoricalDonor | null => {
+  if (donor.key && donor.key.includes('@')) {
+    const emailKey = donor.key.trim().toLowerCase();
+    const match = emailMap.get(emailKey);
+    if (match) return match;
+  }
+
+  const nameKey = normalizeMatchKey(donor.name);
+  if (nameKey) {
+    const match = nameMap.get(nameKey);
+    if (match) return match;
+  }
+
+  if (donor.key && donor.key !== donor.name) {
+    const secondaryKey = normalizeMatchKey(donor.key);
+    if (secondaryKey) {
+      const match = nameMap.get(secondaryKey);
+      if (match) return match;
+    }
+  }
+
+  return null;
+};
+
+const computeDonorTrend = (
+  totalAmount: number,
+  historicalMatch: HistoricalDonor | null,
+  allYears: number[],
+  targetYear: number,
+): DonorTrendInfo => {
+  const prevYear = targetYear - 1;
+  const currentAmount = totalAmount;
+  const prevAmount = historicalMatch?.yearlyAmounts[prevYear] ?? 0;
+
+  const yearlyGiving: Array<{ year: number; amount: number }> = allYears.map((year) => {
+    if (year === targetYear) {
+      return { year, amount: currentAmount };
+    }
+    return { year, amount: historicalMatch?.yearlyAmounts[year] ?? 0 };
+  });
+
+  const lifetimeTotal = yearlyGiving.reduce((sum, item) => sum + item.amount, 0);
+
+  if (!historicalMatch) {
+    return {
+      status: 'new',
+      statusLabel: `New in ${targetYear}`,
+      isMatched: false,
+      historicalDonor: null,
+      yearlyGiving,
+      lifetimeTotal,
+      deltaVsPrevYear: null,
+      deltaPctVsPrevYear: null,
+      previousYearAmount: 0,
+    };
+  }
+
+  const delta = currentAmount - prevAmount;
+  const deltaPct = prevAmount > 0 ? ((currentAmount - prevAmount) / prevAmount) * 100 : null;
+
+  let status: HistoricalTrendStatus = 'consistent';
+  let statusLabel = 'Consistent';
+
+  if (prevAmount === 0 && currentAmount > 0) {
+    status = 're-engaged';
+    statusLabel = 'Re-engaged';
+  } else if (currentAmount > prevAmount) {
+    status = 'upgraded';
+    statusLabel = deltaPct !== null ? `Upgraded (+${deltaPct.toFixed(0)}%)` : 'Upgraded';
+  } else if (currentAmount < prevAmount) {
+    status = 'downgraded';
+    statusLabel = deltaPct !== null ? `Downgraded (${deltaPct.toFixed(0)}%)` : 'Downgraded';
+  } else if (currentAmount === prevAmount && currentAmount > 0) {
+    status = 'consistent';
+    statusLabel = 'Consistent';
+  } else {
+    status = 'consistent';
+    statusLabel = 'Active';
+  }
+
+  return {
+    status,
+    statusLabel,
+    isMatched: true,
+    historicalDonor: historicalMatch,
+    yearlyGiving,
+    lifetimeTotal,
+    deltaVsPrevYear: delta,
+    deltaPctVsPrevYear: deltaPct,
+    previousYearAmount: prevAmount,
+  };
+};
+
+const summarizeDonors = (
+  donations: ParsedDonation[],
+  thresholds: LevelThresholds,
+  historicalDonors: HistoricalDonor[],
+  targetYear: number,
+) => {
+  const { emailMap, nameMap } = buildHistoricalIndices(historicalDonors);
+
+  const historicalYears = new Set<number>();
+  for (const h of historicalDonors) {
+    for (const y of Object.keys(h.yearlyAmounts)) {
+      historicalYears.add(Number(y));
+    }
+  }
+  historicalYears.add(targetYear);
+  const allYears = Array.from(historicalYears).sort((a, b) => a - b);
+
   const donors = donations.reduce((acc, donation) => {
     const existing = acc[donation.donorKey] ?? {
       key: donation.donorKey,
@@ -966,35 +1243,171 @@ const summarizeDonors = (donations: ParsedDonation[], thresholds: LevelThreshold
     }
     acc[donation.donorKey] = existing;
     return acc;
-  }, {} as Record<string, Omit<DonorSummary, 'notes'> & { firstGiftSortValue: number; lastGiftSortValue: number; notesList: string[] }>);
+  }, {} as Record<string, Omit<DonorSummary, 'trend' | 'notes'> & { firstGiftSortValue: number; lastGiftSortValue: number; notesList: string[] }>);
 
-  return Object.values(donors).map((donor) => ({
-    key: donor.key,
-    name: donor.name,
-    city: donor.city,
-    state: donor.state,
-    giftCount: donor.giftCount,
-    totalAmount: donor.totalAmount,
-    averageGift: donor.totalAmount / donor.giftCount,
-    largestGift: donor.largestGift,
-    firstGift: donor.firstGift,
-    lastGift: donor.lastGift,
-    segment: getDonorSegment(donor.totalAmount, thresholds),
-    notes: donor.notesList.join('; '),
-  })).sort((a, b) => b.totalAmount - a.totalAmount || b.giftCount - a.giftCount);
+  return Object.values(donors).map((donor) => {
+    const match = findHistoricalMatch(donor, emailMap, nameMap);
+    const trend = computeDonorTrend(donor.totalAmount, match, allYears, targetYear);
+
+    const notesArray = [...donor.notesList];
+    if (match?.notes && !notesArray.includes(match.notes)) {
+      notesArray.push(`[Historical: ${match.notes}]`);
+    }
+
+    return {
+      key: donor.key,
+      name: donor.name,
+      city: donor.city || match?.city || '',
+      state: donor.state,
+      giftCount: donor.giftCount,
+      totalAmount: donor.totalAmount,
+      averageGift: donor.totalAmount / donor.giftCount,
+      largestGift: donor.largestGift,
+      firstGift: match?.firstGift ? `${match.firstGift} (Hist.) · ${donor.firstGift}` : donor.firstGift,
+      lastGift: donor.lastGift,
+      segment: getDonorSegment(donor.totalAmount, thresholds),
+      notes: notesArray.join('; '),
+      trend,
+    };
+  }).sort((a, b) => b.totalAmount - a.totalAmount || b.giftCount - a.giftCount);
+};
+
+const buildMultiYearOverview = (
+  historicalDonors: HistoricalDonor[],
+  donorSummaries: DonorSummary[],
+  targetYear: number,
+) => {
+  if (historicalDonors.length === 0) return null;
+
+  const yearSet = new Set<number>();
+  for (const h of historicalDonors) {
+    for (const y of Object.keys(h.yearlyAmounts)) {
+      yearSet.add(Number(y));
+    }
+  }
+  yearSet.add(targetYear);
+  const years = Array.from(yearSet).sort((a, b) => a - b);
+
+  const chartData: MultiYearTrendPoint[] = years.map((year) => {
+    if (year === targetYear) {
+      const currentYearTotal = donorSummaries.reduce((sum, d) => sum + d.totalAmount, 0);
+      return {
+        year: String(year),
+        amount: currentYearTotal,
+        donorCount: donorSummaries.length,
+        isCurrentYear: true,
+      };
+    }
+
+    let yearAmount = 0;
+    let yearDonors = 0;
+    for (const h of historicalDonors) {
+      const amt = h.yearlyAmounts[year] ?? 0;
+      if (amt > 0) {
+        yearAmount += amt;
+        yearDonors += 1;
+      }
+    }
+
+    return {
+      year: String(year),
+      amount: yearAmount,
+      donorCount: yearDonors,
+      isCurrentYear: false,
+    };
+  });
+
+  const matchedCount = donorSummaries.filter(d => d.trend.isMatched).length;
+  const upgradedCount = donorSummaries.filter(d => d.trend.status === 'upgraded').length;
+  const reengagedCount = donorSummaries.filter(d => d.trend.status === 're-engaged').length;
+  const downgradedCount = donorSummaries.filter(d => d.trend.status === 'downgraded').length;
+  const consistentCount = donorSummaries.filter(d => d.trend.status === 'consistent').length;
+  const newCount = donorSummaries.filter(d => d.trend.status === 'new').length;
+
+  const prevYear = targetYear - 1;
+  const prevYearTotal = chartData.find(d => d.year === String(prevYear))?.amount ?? 0;
+  const currentYearTotal = chartData.find(d => d.year === String(targetYear))?.amount ?? 0;
+  const yoyDeltaPct = prevYearTotal > 0 ? ((currentYearTotal - prevYearTotal) / prevYearTotal) * 100 : null;
+
+  return {
+    chartData,
+    years,
+    totalHistoricalDonors: historicalDonors.length,
+    matchedCount,
+    matchRate: donorSummaries.length > 0 ? (matchedCount / donorSummaries.length) * 100 : 0,
+    upgradedCount,
+    reengagedCount,
+    downgradedCount,
+    consistentCount,
+    newCount,
+    prevYear,
+    prevYearTotal,
+    currentYearTotal,
+    yoyDeltaPct,
+  };
+};
+
+const renderTrendBadge = (trend: DonorTrendInfo) => {
+  if (!trend.isMatched) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold border bg-blue-50 border-blue-200 text-blue-700">
+        <UserPlus className="w-3 h-3" />
+        {trend.statusLabel}
+      </span>
+    );
+  }
+
+  if (trend.status === 'upgraded') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold border bg-emerald-50 border-emerald-200 text-emerald-700">
+        <ArrowUpRight className="w-3 h-3" />
+        {trend.statusLabel}
+      </span>
+    );
+  }
+
+  if (trend.status === 're-engaged') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold border bg-purple-50 border-purple-200 text-purple-700">
+        <Sparkles className="w-3 h-3" />
+        {trend.statusLabel}
+      </span>
+    );
+  }
+
+  if (trend.status === 'downgraded') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold border bg-amber-50 border-amber-200 text-amber-700">
+        <ArrowDownRight className="w-3 h-3" />
+        {trend.statusLabel}
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold border bg-indigo-50 border-indigo-200 text-indigo-700">
+      <Minus className="w-3 h-3" />
+      {trend.statusLabel}
+    </span>
+  );
 };
 
 const App = () => {
   const [data, setData] = useState<DonationRow[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [historicalData, setHistoricalData] = useState<HistoricalDonor[]>([]);
+  const [historicalFileName, setHistoricalFileName] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<DonorFilter>('all');
+  const [historicalStatusFilter, setHistoricalStatusFilter] = useState<HistoricalStatusFilter>('all');
+  const [expandedDonorKey, setExpandedDonorKey] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [levelThresholds, setLevelThresholds] = useState<LevelThresholds>(defaultLevelThresholds);
   const [timelineMode, setTimelineMode] = useState<TimelineMode>('all');
   const [selectedMonth, setSelectedMonth] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [activeTab, setActiveTab] = useState<'donors' | 'records'>('donors');
+  const [activeTab, setActiveTab] = useState<'donors' | 'records' | 'historical'>('donors');
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
@@ -1007,6 +1420,31 @@ const App = () => {
     } catch (error) {
       console.error('Failed to parse donation CSV', error);
       alert('Unable to parse one or more CSV files.');
+    }
+  };
+
+  const handleHistoricalUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+
+    const file = files[0];
+    setHistoricalFileName(file.name);
+
+    try {
+      const parsedHistorical = await parseHistoricalDonorFile(file);
+      setHistoricalData(parsedHistorical);
+    } catch (error) {
+      console.error('Failed to parse historical donor CSV', error);
+      alert('Unable to parse historical donor CSV file.');
+    }
+  };
+
+  const clearHistoricalData = () => {
+    setHistoricalData([]);
+    setHistoricalFileName(null);
+    setHistoricalStatusFilter('all');
+    if (activeTab === 'historical') {
+      setActiveTab('donors');
     }
   };
 
@@ -1029,9 +1467,12 @@ const App = () => {
   };
 
   const stats = useMemo(() => {
-    if (parsedData.length === 0) return null;
+    if (parsedData.length === 0 && historicalData.length === 0) return null;
 
-    const donorSummaries = summarizeDonors(timelineData, levelThresholds);
+    const currentDate = new Date();
+    const targetYear = currentDate.getFullYear();
+
+    const donorSummaries = summarizeDonors(timelineData, levelThresholds, historicalData, targetYear);
     const totalDonors = donorSummaries.length;
     const amounts = timelineData.map(d => d.amount);
     const median = getMedian(amounts);
@@ -1040,6 +1481,7 @@ const App = () => {
     const largestGift = Math.max(...amounts, 0);
 
     const trendData = buildMonthlyTrendData(timelineData);
+    const multiYearOverview = buildMultiYearOverview(historicalData, donorSummaries, targetYear);
 
     const giftLevelData = giftLevels.map(level => {
       const gifts = timelineData.filter(donation => donation.amount >= level.min && donation.amount < level.max);
@@ -1077,9 +1519,11 @@ const App = () => {
       giftLevelData,
       donorLevelData,
       sheetSummaryColumns: buildSheetSummaryColumns(timelineData),
+      multiYearOverview,
+      targetYear,
     };
 
-  }, [levelThresholds, parsedData.length, timelineData]);
+  }, [historicalData, levelThresholds, parsedData.length, timelineData]);
 
   const insights = useMemo(() => buildDonationInsights(parsedData, levelThresholds), [parsedData, levelThresholds]);
 
@@ -1092,14 +1536,23 @@ const App = () => {
         activeFilter === 'all' ||
         (activeFilter === 'repeat' && donor.giftCount > 1) ||
         donor.segment === activeFilter;
+
+      const matchesHistorical =
+        historicalStatusFilter === 'all' ||
+        (historicalStatusFilter === 'matched' && donor.trend.isMatched) ||
+        (historicalStatusFilter === 'unmatched' && !donor.trend.isMatched) ||
+        donor.trend.status === historicalStatusFilter;
+
       const matchesSearch = !normalizedSearch ||
         donor.name.toLowerCase().includes(normalizedSearch) ||
         donor.key.toLowerCase().includes(normalizedSearch) ||
-        donor.city.toLowerCase().includes(normalizedSearch);
+        donor.city.toLowerCase().includes(normalizedSearch) ||
+        (donor.trend.historicalDonor?.email && donor.trend.historicalDonor.email.toLowerCase().includes(normalizedSearch)) ||
+        (donor.notes && donor.notes.toLowerCase().includes(normalizedSearch));
 
-      return matchesFilter && matchesSearch;
+      return matchesFilter && matchesHistorical && matchesSearch;
     });
-  }, [activeFilter, searchTerm, stats]);
+  }, [activeFilter, historicalStatusFilter, searchTerm, stats]);
 
   const sortedRecords = useMemo(() => {
     return [...timelineData].sort((a, b) => {
@@ -1162,14 +1615,29 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
             <h1 className="text-3xl font-extrabold text-neutral-900 tracking-tight bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
               Donors Summary Dashboard
             </h1>
-            <div className="text-neutral-500 text-sm mt-1 font-medium flex items-center gap-2">
+            <div className="text-neutral-500 text-sm mt-1 font-medium flex flex-wrap items-center gap-2">
               {fileName ? (
                 <span className="inline-flex items-center gap-1.5 text-neutral-700 bg-neutral-100 px-2.5 py-0.5 rounded-full text-xs font-semibold">
                   <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
                   Active: {fileName}
                 </span>
               ) : (
-                <span>Upload one or more donation CSVs to view donation trends</span>
+                <span>Upload donation CSVs to view donation trends</span>
+              )}
+              {historicalFileName && (
+                <span className="inline-flex items-center gap-1.5 text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                  <History className="w-3 h-3 text-indigo-600" />
+                  Master List: {historicalFileName} ({historicalData.length} donors)
+                  <button
+                    type="button"
+                    onClick={clearHistoricalData}
+                    className="ml-1 hover:text-indigo-900 focus:outline-none"
+                    title="Remove historical list"
+                    aria-label="Remove historical list"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
               )}
             </div>
           </div>
@@ -1179,6 +1647,11 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
               <Upload className="w-4 h-4" />
               <span>{fileName ? 'Change CSVs' : 'Upload CSVs'}</span>
               <input type="file" accept=".csv" multiple onChange={handleFileUpload} className="hidden" />
+            </label>
+            <label className="flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-4 py-2.5 rounded-xl cursor-pointer transition active:scale-95 font-semibold text-sm shadow-sm">
+              <History className="w-4 h-4 text-indigo-600" />
+              <span>{historicalFileName ? 'Change Master List' : 'Upload Master List'}</span>
+              <input type="file" accept=".csv" onChange={handleHistoricalUpload} className="hidden" />
             </label>
             {stats && (
               <>
@@ -1384,6 +1857,109 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
               </div>
             </div>
 
+            {/* Historical Master Multi-Year Trend Section */}
+            {stats.multiYearOverview && (
+              <section className="bg-white p-6 rounded-2xl border border-neutral-200/60 shadow-[0_2px_8px_rgba(0,0,0,0.03)] print:hidden">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-neutral-100">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
+                      <History className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-bold text-neutral-900">Historical &amp; Multi-Year Trends</h2>
+                      <p className="text-sm text-neutral-500 mt-0.5">
+                        Multi-year giving trends across historical records ({stats.multiYearOverview.years[0]}–{stats.multiYearOverview.years[stats.multiYearOverview.years.length - 1]}) matched with current transactions
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-xs font-bold">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      {stats.multiYearOverview.matchedCount} of {stats.totalDonors} active donors matched ({stats.multiYearOverview.matchRate.toFixed(0)}%)
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-5">
+                  <MiniStat label="Master List Donors" value={String(stats.multiYearOverview.totalHistoricalDonors)} />
+                  <MiniStat label="Matched in Active Data" value={String(stats.multiYearOverview.matchedCount)} />
+                  <MiniStat label="Upgraded Donors" value={String(stats.multiYearOverview.upgradedCount)} />
+                  <MiniStat label="Re-engaged Donors" value={String(stats.multiYearOverview.reengagedCount)} />
+                  <MiniStat label="Consistent Donors" value={String(stats.multiYearOverview.consistentCount)} />
+                  <MiniStat label="New Donors" value={String(stats.multiYearOverview.newCount)} />
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 mt-6">
+                  <div className="xl:col-span-3 border border-neutral-200 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-neutral-800">Multi-Year Revenue Trajectory</h3>
+                    <p className="text-xs text-neutral-400 font-medium mb-4">Total annual volume across historical master list and active data</p>
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={240} initialDimension={{ width: 480, height: 240 }}>
+                        <BarChart data={stats.multiYearOverview.chartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+                          <XAxis dataKey="year" tickLine={false} axisLine={false} tick={{ fill: '#6B7280', fontSize: 12 }} />
+                          <YAxis tickLine={false} axisLine={false} tick={{ fill: '#9CA3AF', fontSize: 11 }} tickFormatter={(val) => `$${val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val}`} />
+                          <Tooltip
+                            contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.05)' }}
+                            formatter={(value: unknown) => [formatCurrency(Number(value)), 'Total Revenue']}
+                          />
+                          <Bar dataKey="amount" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="xl:col-span-2 border border-neutral-200 rounded-xl p-5 flex flex-col justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-neutral-800">Year-over-Year Summary</h3>
+                      <p className="text-xs text-neutral-400 font-medium mb-4">Performance comparison vs {stats.multiYearOverview.prevYear}</p>
+                      
+                      <div className="space-y-4">
+                        <div className="p-4 bg-neutral-50 rounded-xl border border-neutral-100">
+                          <div className="text-xs font-semibold text-neutral-500 uppercase">YoY Revenue Volume</div>
+                          <div className="flex items-baseline gap-2 mt-1">
+                            <span className="text-2xl font-extrabold text-neutral-900">
+                              {formatCurrency(stats.multiYearOverview.currentYearTotal)}
+                            </span>
+                            <span className="text-xs text-neutral-400">vs {formatCurrency(stats.multiYearOverview.prevYearTotal)} ({stats.multiYearOverview.prevYear})</span>
+                          </div>
+                          {stats.multiYearOverview.yoyDeltaPct !== null && (
+                            <div className={`mt-2 text-xs font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md ${
+                              stats.multiYearOverview.yoyDeltaPct >= 0
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {stats.multiYearOverview.yoyDeltaPct >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                              {stats.multiYearOverview.yoyDeltaPct >= 0 ? '+' : ''}{stats.multiYearOverview.yoyDeltaPct.toFixed(1)}% YoY
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-2 text-xs text-neutral-600">
+                          <div className="flex justify-between py-1 border-b border-neutral-100">
+                            <span className="font-medium text-neutral-500">Upgraded donors (+ YoY):</span>
+                            <span className="font-bold text-emerald-700">{stats.multiYearOverview.upgradedCount} donors</span>
+                          </div>
+                          <div className="flex justify-between py-1 border-b border-neutral-100">
+                            <span className="font-medium text-neutral-500">Re-engaged (gave after gap):</span>
+                            <span className="font-bold text-purple-700">{stats.multiYearOverview.reengagedCount} donors</span>
+                          </div>
+                          <div className="flex justify-between py-1 border-b border-neutral-100">
+                            <span className="font-medium text-neutral-500">Consistent giving:</span>
+                            <span className="font-bold text-indigo-700">{stats.multiYearOverview.consistentCount} donors</span>
+                          </div>
+                          <div className="flex justify-between py-1 border-b border-neutral-100">
+                            <span className="font-medium text-neutral-500">New first-time givers:</span>
+                            <span className="font-bold text-blue-700">{stats.multiYearOverview.newCount} donors</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
             {insights && (
               <section className="bg-white p-6 rounded-2xl border border-neutral-200/60 shadow-[0_2px_8px_rgba(0,0,0,0.03)] print:hidden">
                 <div className="flex items-center gap-3">
@@ -1520,9 +2096,9 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
               <div className="border-b border-neutral-200 p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
                   <h3 className="text-xl font-bold text-neutral-900">Detailed Data Explorer</h3>
-                  <p className="text-sm text-neutral-500 mt-1">Investigate individual donor histories or view raw donation records</p>
+                  <p className="text-sm text-neutral-500 mt-1">Investigate individual donor histories, multi-year trends, or view raw donation records</p>
                 </div>
-                <div className="flex bg-neutral-100 p-1 rounded-xl w-fit">
+                <div className="flex flex-wrap bg-neutral-100 p-1 rounded-xl w-fit">
                   <button
                     onClick={() => setActiveTab('donors')}
                     className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
@@ -1543,6 +2119,18 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                   >
                     All Records ({sortedRecords.length})
                   </button>
+                  {historicalData.length > 0 && (
+                    <button
+                      onClick={() => setActiveTab('historical')}
+                      className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                        activeTab === 'historical'
+                          ? 'bg-white text-indigo-600 shadow-sm'
+                          : 'text-neutral-500 hover:text-neutral-900'
+                      }`}
+                    >
+                      Master List ({historicalData.length})
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1557,7 +2145,7 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                         type="search"
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
-                        placeholder="Search donor, ID, or city"
+                        placeholder="Search donor, email, ID, or city"
                         className="w-full border border-neutral-200 rounded-xl pl-10 pr-4 py-2 text-sm bg-neutral-50 hover:bg-neutral-100/70 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all py-2.5"
                       />
                     </div>
@@ -1634,6 +2222,38 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                   </div>
                 </div>
 
+                {/* Historical Trajectory Filter */}
+                {historicalData.length > 0 && (
+                  <div className="pt-2">
+                    <span className="text-xs font-bold text-neutral-500 uppercase tracking-wider block mb-2">Filter by Historical Trajectory</span>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { id: 'all' as const, label: 'All Donors' },
+                        { id: 'matched' as const, label: `Matched History (${stats.multiYearOverview?.matchedCount ?? 0})` },
+                        { id: 'upgraded' as const, label: `Upgraded (${stats.multiYearOverview?.upgradedCount ?? 0})` },
+                        { id: 're-engaged' as const, label: `Re-engaged (${stats.multiYearOverview?.reengagedCount ?? 0})` },
+                        { id: 'consistent' as const, label: `Consistent (${stats.multiYearOverview?.consistentCount ?? 0})` },
+                        { id: 'downgraded' as const, label: `Downgraded (${stats.multiYearOverview?.downgradedCount ?? 0})` },
+                        { id: 'new' as const, label: `New in ${stats.targetYear} (${stats.multiYearOverview?.newCount ?? 0})` },
+                        { id: 'unmatched' as const, label: 'Unmatched' },
+                      ].map((btn) => (
+                        <button
+                          key={btn.id}
+                          type="button"
+                          onClick={() => setHistoricalStatusFilter(btn.id)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                            historicalStatusFilter === btn.id
+                              ? 'bg-indigo-600 text-white shadow-sm'
+                              : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200/70'
+                          }`}
+                        >
+                          {btn.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Table */}
                 <div className="border border-neutral-200/80 rounded-xl overflow-hidden shadow-sm">
                   <div className="p-4 bg-neutral-50 border-b border-neutral-200 flex justify-between items-center">
@@ -1652,51 +2272,183 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                           <th className="font-semibold px-4 py-3 text-right">Avg</th>
                           <th className="font-semibold px-4 py-3">Level</th>
                           <th className="font-semibold px-4 py-3">Latest</th>
+                          {historicalData.length > 0 && (
+                            <th className="font-semibold px-4 py-3">Historical Trend</th>
+                          )}
+                          <th className="font-semibold px-3 py-3 text-center">History</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-neutral-100 bg-white">
-                        {filteredDonors.slice(0, 50).map((donor) => (
-                          <tr key={donor.key} className="hover:bg-neutral-50/80 transition-colors">
-                            <td className="px-6 py-3.5 min-w-56">
-                              <div className="font-bold text-neutral-950">{donor.name}</div>
-                              <div className="text-xs text-neutral-400 mt-0.5 font-medium">
-                                {donor.key !== donor.name ? (
-                                  <>
-                                    <span>{donor.key}</span>
-                                    {donor.city ? ` · ${donor.city}${donor.state ? `, ${donor.state}` : ''}` : ''}
-                                  </>
-                                ) : (
-                                  donor.city ? `${donor.city}${donor.state ? `, ${donor.state}` : ''}` : ''
+                        {filteredDonors.slice(0, 50).map((donor) => {
+                          const isExpanded = expandedDonorKey === donor.key;
+                          return (
+                            <React.Fragment key={donor.key}>
+                              <tr className="hover:bg-neutral-50/80 transition-colors">
+                                <td className="px-6 py-3.5 min-w-56">
+                                  <div className="font-bold text-neutral-950">{donor.name}</div>
+                                  <div className="text-xs text-neutral-400 mt-0.5 font-medium">
+                                    {donor.key !== donor.name ? (
+                                      <>
+                                        <span>{donor.key}</span>
+                                        {donor.city ? ` · ${donor.city}${donor.state ? `, ${donor.state}` : ''}` : ''}
+                                      </>
+                                    ) : (
+                                      donor.city ? `${donor.city}${donor.state ? `, ${donor.state}` : ''}` : ''
+                                    )}
+                                  </div>
+                                  {donor.notes && (
+                                    <div className="text-xs text-neutral-600 mt-1 italic font-medium bg-neutral-50 border border-neutral-200 rounded-md px-2 py-0.5 max-w-xs md:max-w-md break-words">
+                                      {donor.notes}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3.5 text-right font-bold text-neutral-900">{formatCurrency(donor.totalAmount)}</td>
+                                <td className="px-4 py-3.5 text-right font-semibold text-neutral-600">{donor.giftCount}</td>
+                                <td className="px-4 py-3.5 text-right font-medium text-neutral-600">{formatCurrency(donor.averageGift)}</td>
+                                <td className="px-4 py-3.5">
+                                  <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-bold border ${
+                                    donor.segment === 'major'
+                                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                      : donor.segment === 'mid'
+                                        ? 'bg-blue-50 border-blue-200 text-blue-700'
+                                        : donor.segment === 'core'
+                                          ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                          : 'bg-neutral-50 border-neutral-200 text-neutral-700'
+                                  }`}>
+                                    {getSegmentLabel(donor.segment)}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3.5 text-neutral-500 font-medium whitespace-nowrap">{donor.lastGift}</td>
+                                {historicalData.length > 0 && (
+                                  <td className="px-4 py-3.5">
+                                    <div className="flex flex-col gap-1">
+                                      <div>{renderTrendBadge(donor.trend)}</div>
+                                      <div className="flex items-center gap-1 text-[10px] text-neutral-500 font-mono flex-wrap">
+                                        {donor.trend.yearlyGiving.map(yg => (
+                                          <span
+                                            key={yg.year}
+                                            className={`px-1 rounded ${
+                                              yg.year === stats.targetYear
+                                                ? 'bg-blue-100 font-bold text-blue-900'
+                                                : yg.amount > 0
+                                                  ? 'bg-neutral-100 text-neutral-700 font-semibold'
+                                                  : 'text-neutral-300'
+                                            }`}
+                                            title={`${yg.year}: ${formatCurrency(yg.amount)}`}
+                                          >
+                                            '{String(yg.year).slice(-2)}:{yg.amount >= 1000 ? `$${(yg.amount / 1000).toFixed(1)}k` : formatCurrency(yg.amount)}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </td>
                                 )}
-                              </div>
-                              {donor.notes && (
-                                <div className="text-xs text-neutral-600 mt-1 italic font-medium bg-neutral-50 border border-neutral-200 rounded-md px-2 py-0.5 max-w-xs md:max-w-md break-words">
-                                  {donor.notes}
-                                </div>
+                                <td className="px-3 py-3.5 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedDonorKey(isExpanded ? null : donor.key)}
+                                    className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-500 hover:text-neutral-800 transition"
+                                    aria-label={`Toggle history for ${donor.name}`}
+                                  >
+                                    {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                  </button>
+                                </td>
+                              </tr>
+                              {isExpanded && (
+                                <tr className="bg-neutral-50/70 border-b border-neutral-200">
+                                  <td colSpan={historicalData.length > 0 ? 8 : 7} className="px-6 py-4">
+                                    <div className="bg-white rounded-xl border border-neutral-200 p-4 space-y-4 shadow-sm">
+                                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-neutral-100 pb-3">
+                                        <div>
+                                          <h4 className="font-bold text-neutral-900 text-base">{donor.name} — Giving History</h4>
+                                          <p className="text-xs text-neutral-500 mt-0.5">
+                                            {donor.trend.isMatched ? 'Matched with historical master list' : 'First recorded giving in active dataset'}
+                                          </p>
+                                        </div>
+                                        <div className="flex items-center gap-3 text-xs">
+                                          <span className="font-semibold text-neutral-600">
+                                            Lifetime Total: <strong className="text-neutral-900 font-bold">{formatCurrency(donor.trend.lifetimeTotal)}</strong>
+                                          </span>
+                                          {donor.firstGift && (
+                                            <span className="font-semibold text-neutral-600">
+                                              First Gift: <strong className="text-neutral-900 font-bold">{donor.firstGift}</strong>
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Multi-Year Annual Breakdown */}
+                                      <div>
+                                        <span className="text-xs font-bold text-neutral-500 uppercase tracking-wider block mb-2">Annual Giving Breakdown</span>
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-2">
+                                          {donor.trend.yearlyGiving.map((yg) => {
+                                            const isCurrent = yg.year === stats.targetYear;
+                                            return (
+                                              <div
+                                                key={yg.year}
+                                                className={`p-2.5 rounded-lg border text-center ${
+                                                  isCurrent
+                                                    ? 'bg-blue-50/70 border-blue-200 ring-1 ring-blue-300'
+                                                    : yg.amount > 0
+                                                      ? 'bg-neutral-50 border-neutral-200'
+                                                      : 'bg-neutral-50/40 border-neutral-100 text-neutral-400'
+                                                }`}
+                                              >
+                                                <div className="text-[11px] font-bold text-neutral-500">
+                                                  {yg.year} {isCurrent ? '(Current)' : ''}
+                                                </div>
+                                                <div className={`text-sm font-extrabold mt-0.5 ${isCurrent ? 'text-blue-900' : yg.amount > 0 ? 'text-neutral-900' : 'text-neutral-400'}`}>
+                                                  {formatCurrency(yg.amount)}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+
+                                      {/* Contact & Historical Metadata */}
+                                      {donor.trend.historicalDonor && (
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-neutral-100 text-xs">
+                                          {donor.trend.historicalDonor.email && (
+                                            <div className="flex items-center gap-1.5 text-neutral-700">
+                                              <Mail className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                                              <span className="font-semibold truncate">{donor.trend.historicalDonor.email}</span>
+                                            </div>
+                                          )}
+                                          {donor.trend.historicalDonor.phone && (
+                                            <div className="flex items-center gap-1.5 text-neutral-700">
+                                              <Phone className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                                              <span className="font-semibold">{donor.trend.historicalDonor.phone}</span>
+                                            </div>
+                                          )}
+                                          {(donor.trend.historicalDonor.address || donor.trend.historicalDonor.city) && (
+                                            <div className="flex items-center gap-1.5 text-neutral-700">
+                                              <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                                              <span className="font-semibold truncate">
+                                                {[donor.trend.historicalDonor.address, donor.trend.historicalDonor.city].filter(Boolean).join(', ')}
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* Notes */}
+                                      {donor.notes && (
+                                        <div className="text-xs text-neutral-700 bg-neutral-50 border border-neutral-200 rounded-lg p-2.5">
+                                          <span className="font-bold text-neutral-800">Notes: </span>
+                                          {donor.notes}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                            <td className="px-4 py-3.5 text-right font-bold text-neutral-900">{formatCurrency(donor.totalAmount)}</td>
-                            <td className="px-4 py-3.5 text-right font-semibold text-neutral-600">{donor.giftCount}</td>
-                            <td className="px-4 py-3.5 text-right font-medium text-neutral-600">{formatCurrency(donor.averageGift)}</td>
-                            <td className="px-4 py-3.5">
-                              <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-bold border ${
-                                donor.segment === 'major'
-                                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                                  : donor.segment === 'mid'
-                                    ? 'bg-blue-50 border-blue-200 text-blue-700'
-                                    : donor.segment === 'core'
-                                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                                      : 'bg-neutral-50 border-neutral-200 text-neutral-700'
-                              }`}>
-                                {getSegmentLabel(donor.segment)}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3.5 text-neutral-500 font-medium whitespace-nowrap">{donor.lastGift}</td>
-                          </tr>
-                        ))}
+                            </React.Fragment>
+                          );
+                        })}
                         {filteredDonors.length === 0 && (
                           <tr>
-                            <td className="px-6 py-12 text-center text-neutral-400 font-medium border-0" colSpan={6}>
+                            <td className="px-6 py-12 text-center text-neutral-400 font-medium border-0" colSpan={historicalData.length > 0 ? 8 : 7}>
                               No donors match the current filters.
                             </td>
                           </tr>
@@ -1769,6 +2521,84 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                   </div>
                 </div>
               </section>
+
+              {historicalData.length > 0 && (
+                <section className={`p-6 space-y-4 ${activeTab === 'historical' ? 'block' : 'hidden'}`}>
+                  <div className="flex justify-between items-center pb-4 border-b border-neutral-100">
+                    <div>
+                      <h3 className="text-lg font-bold text-neutral-900">Historical Master List</h3>
+                      <p className="text-xs text-neutral-400 font-medium mt-0.5">
+                        {historicalData.length} records in master list · {stats?.multiYearOverview?.matchedCount ?? 0} active givers this year
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="border border-neutral-200 rounded-xl overflow-hidden shadow-sm">
+                    <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-neutral-50 text-neutral-500 border-b border-neutral-200 text-left sticky top-0 z-10">
+                          <tr>
+                            <th className="font-semibold px-6 py-3 bg-neutral-50">Donor</th>
+                            <th className="font-semibold px-4 py-3 bg-neutral-50">First Gift</th>
+                            {stats?.multiYearOverview?.years.map(year => (
+                              <th key={year} className="font-semibold px-3 py-3 text-right bg-neutral-50">
+                                {year}
+                              </th>
+                            ))}
+                            <th className="font-semibold px-4 py-3 text-right bg-neutral-50">Total Historical</th>
+                            <th className="font-semibold px-4 py-3 bg-neutral-50">Status in {stats?.targetYear}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-neutral-100 bg-white">
+                          {historicalData.map((donor) => {
+                            const matchedSummary = stats?.donorSummaries.find(d => d.trend.historicalDonor?.id === donor.id);
+                            return (
+                              <tr key={donor.id} className="hover:bg-neutral-50/80 transition-colors">
+                                <td className="px-6 py-3.5">
+                                  <div className="font-bold text-neutral-900">{donor.name}</div>
+                                  <div className="text-xs text-neutral-400 mt-0.5">
+                                    {donor.email || donor.city || '—'}
+                                  </div>
+                                  {donor.notes && (
+                                    <div className="text-xs text-neutral-600 mt-1 italic font-medium bg-neutral-50 border border-neutral-200 rounded px-2 py-0.5 max-w-xs break-words">
+                                      {donor.notes}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3.5 text-neutral-600 font-medium whitespace-nowrap">{donor.firstGift || '—'}</td>
+                                {stats?.multiYearOverview?.years.map(year => {
+                                  const amt = year === stats.targetYear && matchedSummary
+                                    ? matchedSummary.totalAmount
+                                    : donor.yearlyAmounts[year] ?? 0;
+                                  return (
+                                    <td key={year} className="px-3 py-3.5 text-right font-medium text-neutral-700">
+                                      {amt > 0 ? formatCurrency(amt) : <span className="text-neutral-300">$0.00</span>}
+                                    </td>
+                                  );
+                                })}
+                                <td className="px-4 py-3.5 text-right font-bold text-neutral-900">
+                                  {formatCurrency(donor.totalHistoricalAmount + (matchedSummary ? matchedSummary.totalAmount : (donor.yearlyAmounts[stats?.targetYear ?? 2026] ?? 0)))}
+                                </td>
+                                <td className="px-4 py-3.5 whitespace-nowrap">
+                                  {matchedSummary ? (
+                                    <span className="inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      Active: {formatCurrency(matchedSummary.totalAmount)}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-medium bg-neutral-100 text-neutral-500">
+                                      Not given in {stats?.targetYear}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </section>
+              )}
             </div>
           </div>
         ) : (
@@ -1784,14 +2614,19 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                 No data uploaded
               </h2>
               <p className="mt-4 text-base text-neutral-500 leading-relaxed">
-                Get started by uploading your donation CSV records.
+                Get started by uploading your donation CSV records, or upload a historical donor master list to compare trends.
               </p>
 
               <div className="mt-8 flex flex-col sm:flex-row gap-3 w-full justify-center">
                 <label className="flex items-center justify-center gap-2 bg-neutral-900 text-white px-6 py-3 rounded-xl cursor-pointer hover:bg-neutral-800 active:scale-95 transition-all duration-200 font-semibold shadow-md shadow-neutral-900/10">
                   <Upload className="w-4.5 h-4.5" />
-                  <span>Select CSV Files</span>
+                  <span>Select Donation CSVs</span>
                   <input type="file" accept=".csv" multiple onChange={handleFileUpload} className="hidden" />
+                </label>
+                <label className="flex items-center justify-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-6 py-3 rounded-xl cursor-pointer active:scale-95 transition-all duration-200 font-semibold shadow-sm">
+                  <History className="w-4.5 h-4.5 text-indigo-600" />
+                  <span>Upload Master List</span>
+                  <input type="file" accept=".csv" onChange={handleHistoricalUpload} className="hidden" />
                 </label>
               </div>
 
@@ -1800,14 +2635,14 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                   <div className="mt-1 flex items-center justify-center w-6 h-6 rounded-full bg-blue-50 text-blue-600 text-xs font-bold shrink-0">1</div>
                   <div>
                     <h4 className="font-bold text-neutral-900 text-sm">Upload CSVs</h4>
-                    <p className="text-xs text-neutral-500 mt-1">Accepts multiple standard monthly reports.</p>
+                    <p className="text-xs text-neutral-500 mt-1">Accepts monthly reports and historical master lists.</p>
                   </div>
                 </div>
                 <div className="flex gap-3">
                   <div className="mt-1 flex items-center justify-center w-6 h-6 rounded-full bg-blue-50 text-blue-600 text-xs font-bold shrink-0">2</div>
                   <div>
                     <h4 className="font-bold text-neutral-900 text-sm">Segment Donors</h4>
-                    <p className="text-xs text-neutral-500 mt-1">Configure thresholds to map major & core givers.</p>
+                    <p className="text-xs text-neutral-500 mt-1">Match historical profiles and track upgrade trajectories.</p>
                   </div>
                 </div>
                 <div className="flex gap-3">
@@ -1828,7 +2663,7 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
       </div>
     </div>
   );
-}
+};
 
 const StatCard = ({ title, value, icon }: { title: string, value: string, icon: React.ReactNode }) => (
   <div className="bg-white p-6 rounded-2xl border border-neutral-200/60 shadow-[0_2px_8px_rgba(0,0,0,0.02)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all duration-300 flex flex-col justify-between relative overflow-hidden group">
