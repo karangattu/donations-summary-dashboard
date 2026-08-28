@@ -824,4 +824,104 @@ describe('Donations Summary Dashboard', () => {
       expect(screen.getByText(`Not given in ${currentYear}`)).toBeInTheDocument()
     })
   })
+
+  it('uploads vertical monthly projections CSV and displays actual vs projected variances in MoM breakdown', async () => {
+    render(<App />)
+    const currentYear = new Date().getFullYear()
+
+    const currentFile = new File(['current'], 'current.csv', { type: 'text/csv' })
+    const projectionsFile = new File(['projections'], 'projections_2026.csv', { type: 'text/csv' })
+
+    const uploadCurrentInput = screen.getAllByLabelText(/Upload CSV/i)[0]
+    const uploadProjectionsInput = screen.getAllByLabelText(/Upload Projections/i)[0]
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+
+      if (file.name === 'current.csv') {
+        config.complete({
+          data: [
+            { Donor: 'D1', 'Donation Date': `1/15/${currentYear}`, 'Donation Amount': '$15,000.00', 'First Name': 'Alice', 'Last Name': 'Smith' },
+            { Donor: 'D2', 'Donation Date': `2/10/${currentYear}`, 'Donation Amount': '$8,000.00', 'First Name': 'Bob', 'Last Name': 'Jones' }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      } else {
+        config.complete({
+          data: [
+            { Month: 'January', 'Projected Amount': '$10,000.00' },
+            { Month: 'February', 'Projected Amount': '$10,000.00' }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      }
+    })
+
+    fireEvent.change(uploadCurrentInput, { target: { files: [currentFile] } })
+    fireEvent.change(uploadProjectionsInput, { target: { files: [projectionsFile] } })
+
+    await waitFor(() => {
+      expect(screen.getByText('YTD Performance vs Forecast:')).toBeInTheDocument()
+      expect(screen.getByText('Projections: projections_2026.csv')).toBeInTheDocument()
+      expect(screen.getByText('vs Goal')).toBeInTheDocument()
+      expect(screen.getByText('% Goal')).toBeInTheDocument()
+    })
+
+    // January: 15,000 vs 10,000 projected = +$5,000 (+50%), 150%
+    expect(screen.getByText('+$5,000.00 (+50%)')).toBeInTheDocument()
+    expect(screen.getByText('150%')).toBeInTheDocument()
+
+    // February: 8,000 vs 10,000 projected = -$2,000 (-20%), 80%
+    expect(screen.getByText('-$2,000.00 (-20%)')).toBeInTheDocument()
+    expect(screen.getByText('80%')).toBeInTheDocument()
+  })
+
+  it('uploads horizontal format projections and allows clearing projections', async () => {
+    render(<App />)
+    const currentYear = new Date().getFullYear()
+
+    const currentFile = new File(['current'], 'current.csv', { type: 'text/csv' })
+    const projectionsFile = new File(['projections'], 'horizontal_budget.csv', { type: 'text/csv' })
+
+    const uploadCurrentInput = screen.getAllByLabelText(/Upload CSV/i)[0]
+    const uploadProjectionsInput = screen.getAllByLabelText(/Upload Projections/i)[0]
+
+    const PapaMock = vi.mocked(Papa.parse as unknown as (file: File, config: Papa.ParseConfig<DonationRow>) => void)
+    PapaMock.mockImplementation((file: File, config: Papa.ParseConfig<DonationRow>) => {
+      if (!config.complete) return
+
+      if (file.name === 'current.csv') {
+        config.complete({
+          data: [
+            { Donor: 'D1', 'Donation Date': `1/15/${currentYear}`, 'Donation Amount': '$12,000.00', 'First Name': 'Alice', 'Last Name': 'Smith' }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      } else {
+        config.complete({
+          data: [
+            { Jan: '$10,000', Feb: '$12,000', Mar: '$15,000', Apr: '$10,000' }
+          ],
+          errors: [], meta: parseMeta
+        }, undefined)
+      }
+    })
+
+    fireEvent.change(uploadCurrentInput, { target: { files: [currentFile] } })
+    fireEvent.change(uploadProjectionsInput, { target: { files: [projectionsFile] } })
+
+    await waitFor(() => {
+      expect(screen.getByText('Projections: horizontal_budget.csv')).toBeInTheDocument()
+      expect(screen.getByText('+$2,000.00 (+20%)')).toBeInTheDocument()
+    })
+
+    const clearButton = screen.getByLabelText('Remove projections')
+    fireEvent.click(clearButton)
+
+    await waitFor(() => {
+      expect(screen.queryByText('Projections: horizontal_budget.csv')).not.toBeInTheDocument()
+      expect(screen.queryByText('vs Goal')).not.toBeInTheDocument()
+    })
+  })
 })

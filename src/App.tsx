@@ -28,6 +28,7 @@ import {
   Mail,
   Phone,
   MapPin,
+  Target,
 } from 'lucide-react';
 
 type DonationRow = Record<string, string | undefined>;
@@ -148,6 +149,7 @@ interface MonthInsight {
   label: string;
   shortLabel: string;
   sortValue: number;
+  monthIndex: number;
   giftCount: number;
   totalAmount: number;
   averageGift: number;
@@ -162,7 +164,13 @@ interface MonthInsight {
   amountDeltaPct: number | null;
   donorDelta: number | null;
   hasData: boolean;
+  projectedAmount: number | null;
+  varianceAmount: number | null;
+  variancePct: number | null;
+  targetAchievedPct: number | null;
 }
+
+type MonthlyProjections = Record<number, number>;
 
 type CalloutTone = 'positive' | 'negative' | 'neutral' | 'warning';
 type CalloutIconKind = 'peak' | 'growth' | 'decline' | 'crown' | 'flame' | 'userPlus';
@@ -211,6 +219,11 @@ interface DonationInsights {
   totalReturningDonors: number;
   bestStreakDonor: { name: string; streak: number } | null;
   overallRetention: number | null;
+  hasProjections: boolean;
+  ytdActual: number;
+  ytdProjected: number;
+  ytdVariance: number;
+  ytdVariancePct: number | null;
 }
 
 const donorFilters: Array<{ id: DonorFilter; label: string }> = [
@@ -350,6 +363,115 @@ const parseHistoricalDonorFile = (file: File) => {
   });
 };
 
+const matchMonthIndex = (str: string): number | null => {
+  if (!str) return null;
+  const clean = str.trim().toLowerCase().replace(/[^a-z0-9]/g, ' ');
+  const tokens = clean.split(/\s+/).filter(Boolean);
+
+  const monthMap: Record<string, number> = {
+    jan: 0, january: 0,
+    feb: 1, february: 1,
+    mar: 2, march: 2,
+    apr: 3, april: 3,
+    may: 4,
+    jun: 5, june: 5,
+    jul: 6, july: 6,
+    aug: 7, august: 7,
+    sep: 8, sept: 8, september: 8,
+    oct: 9, october: 9,
+    nov: 10, november: 10,
+    dec: 11, december: 11,
+  };
+
+  for (const token of tokens) {
+    if (token in monthMap) return monthMap[token];
+  }
+
+  for (const token of tokens) {
+    const num = Number(token);
+    if (!Number.isNaN(num) && num >= 1 && num <= 12) {
+      return num - 1;
+    }
+  }
+
+  return null;
+};
+
+const parseProjectionsFile = (file: File) => {
+  return new Promise<MonthlyProjections>((resolve, reject) => {
+    Papa.parse<DonationRow>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const rows = results.data;
+        const projections: MonthlyProjections = {};
+        if (rows.length === 0) {
+          resolve(projections);
+          return;
+        }
+
+        const headers = Object.keys(rows[0] ?? {});
+        const horizontalHeaders: Array<{ header: string; monthIndex: number }> = [];
+        for (const h of headers) {
+          const mIdx = matchMonthIndex(h);
+          if (mIdx !== null) {
+            horizontalHeaders.push({ header: h, monthIndex: mIdx });
+          }
+        }
+
+        if (horizontalHeaders.length >= 3) {
+          const firstRow = rows[0];
+          for (const { header, monthIndex } of horizontalHeaders) {
+            const val = parseCurrency(firstRow[header] ?? '');
+            if (!Number.isNaN(val)) {
+              projections[monthIndex] = val;
+            }
+          }
+          resolve(projections);
+          return;
+        }
+
+        for (const row of rows) {
+          const monthVal = getFieldValue(row, ['Month', 'Period', 'Date', 'Month Name', 'Month/Year', 'Time']);
+          const amountVal = getFieldValue(row, [
+            'Projected', 'Projected Amount', 'Target', 'Goal', 'Budget', 'Forecast',
+            'Projection', 'Amount', 'Target Amount', 'Projected Goal', 'Total'
+          ]);
+
+          let mIdx = matchMonthIndex(monthVal);
+          if (mIdx === null) {
+            for (const key of Object.keys(row)) {
+              mIdx = matchMonthIndex(row[key] ?? '');
+              if (mIdx !== null) break;
+            }
+          }
+
+          if (mIdx !== null) {
+            let amount = parseCurrency(amountVal);
+            if (Number.isNaN(amount)) {
+              for (const key of Object.keys(row)) {
+                const parsed = parseCurrency(row[key] ?? '');
+                if (!Number.isNaN(parsed) && parsed > 0) {
+                  amount = parsed;
+                  break;
+                }
+              }
+            }
+            if (!Number.isNaN(amount)) {
+              projections[mIdx] = amount;
+            }
+          }
+        }
+
+        resolve(projections);
+      },
+      error: (error) => {
+        reject(error);
+      },
+    });
+  });
+};
+
 const getFieldValue = (row: DonationRow, fieldNames: string[]) => {
   for (const fieldName of fieldNames) {
     const value = row[fieldName]?.trim();
@@ -370,7 +492,9 @@ const getDateSortValue = (date: string) => {
 };
 
 const formatCurrency = (amount: number) => {
-  return '$' + amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const isNegative = amount < 0;
+  const absAmount = Math.abs(amount);
+  return `${isNegative ? '-' : ''}$${absAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 const getMedian = (amounts: number[]) => {
@@ -645,6 +769,7 @@ const buildMonthInsights = (
   activityMap: Map<string, DonorMonthlyActivity>,
   targetYear: number,
   lastMonthIndex: number,
+  projections: MonthlyProjections = {},
 ): MonthInsight[] => {
   const yearBuckets = getYearToDateMonthBuckets(targetYear, lastMonthIndex);
   const byMonth = new Map<string, ParsedDonation[]>();
@@ -664,6 +789,7 @@ const buildMonthInsights = (
   let prevDonorCount: number | null = null;
 
   return yearBuckets.map(bucket => {
+    const monthIndex = new Date(bucket.sortValue).getMonth();
     const monthDonations = byMonth.get(bucket.key) ?? [];
     const monthDonorKeys = new Set(monthDonations.map(d => d.donorKey));
     const total = monthDonations.reduce((sum, d) => sum + d.amount, 0);
@@ -695,11 +821,17 @@ const buildMonthInsights = (
     const amountDeltaPct = prevTotal === null || prevTotal === 0 ? null : ((total - prevTotal) / prevTotal) * 100;
     const donorDelta = prevDonorCount === null ? null : donorCount - prevDonorCount;
 
+    const projectedAmount = projections[monthIndex] !== undefined ? projections[monthIndex] : null;
+    const varianceAmount = projectedAmount !== null ? total - projectedAmount : null;
+    const variancePct = projectedAmount !== null && projectedAmount > 0 ? ((total - projectedAmount) / projectedAmount) * 100 : null;
+    const targetAchievedPct = projectedAmount !== null && projectedAmount > 0 ? (total / projectedAmount) * 100 : null;
+
     const insight: MonthInsight = {
       key: bucket.key,
       label: bucket.label,
       shortLabel: bucket.label.replace(` ${targetYear}`, ''),
       sortValue: bucket.sortValue,
+      monthIndex,
       giftCount: monthDonations.length,
       totalAmount: total,
       averageGift: monthDonations.length > 0 ? total / monthDonations.length : 0,
@@ -714,6 +846,10 @@ const buildMonthInsights = (
       amountDeltaPct,
       donorDelta,
       hasData: monthDonations.length > 0,
+      projectedAmount,
+      varianceAmount,
+      variancePct,
+      targetAchievedPct,
     };
 
     prevTotal = total;
@@ -942,13 +1078,14 @@ const buildLapsedDonors = (
 const buildDonationInsights = (
   donations: ParsedDonation[],
   thresholds: LevelThresholds,
+  projections: MonthlyProjections = {},
 ): DonationInsights | null => {
   const currentDate = new Date();
   const targetYear = currentDate.getFullYear();
   const lastMonthIndex = currentDate.getMonth();
 
   const activityMap = buildDonorActivityMap(donations, targetYear);
-  const monthInsights = buildMonthInsights(donations, activityMap, targetYear, lastMonthIndex);
+  const monthInsights = buildMonthInsights(donations, activityMap, targetYear, lastMonthIndex, projections);
   const activeMonthCount = monthInsights.filter(m => m.hasData).length;
   if (activeMonthCount === 0) return null;
 
@@ -982,6 +1119,12 @@ const buildDonationInsights = (
   }
   const bestStreakDonor = bestStreak >= 2 ? { name: bestStreakName, streak: bestStreak } : null;
 
+  const hasProjections = Object.keys(projections).length > 0;
+  const ytdActual = activeInsights.reduce((sum, m) => sum + m.totalAmount, 0);
+  const ytdProjected = activeInsights.reduce((sum, m) => sum + (m.projectedAmount ?? 0), 0);
+  const ytdVariance = ytdActual - ytdProjected;
+  const ytdVariancePct = ytdProjected > 0 ? ((ytdActual - ytdProjected) / ytdProjected) * 100 : null;
+
   return {
     monthInsights,
     callouts,
@@ -994,6 +1137,11 @@ const buildDonationInsights = (
     totalReturningDonors,
     bestStreakDonor,
     overallRetention,
+    hasProjections,
+    ytdActual,
+    ytdProjected,
+    ytdVariance,
+    ytdVariancePct,
   };
 };
 
@@ -1397,6 +1545,8 @@ const App = () => {
   const [fileName, setFileName] = useState<string | null>(null);
   const [historicalData, setHistoricalData] = useState<HistoricalDonor[]>([]);
   const [historicalFileName, setHistoricalFileName] = useState<string | null>(null);
+  const [projectionsData, setProjectionsData] = useState<MonthlyProjections>({});
+  const [projectionsFileName, setProjectionsFileName] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<DonorFilter>('all');
   const [historicalStatusFilter, setHistoricalStatusFilter] = useState<HistoricalStatusFilter>('all');
   const [expandedDonorKey, setExpandedDonorKey] = useState<string | null>(null);
@@ -1446,6 +1596,27 @@ const App = () => {
     if (activeTab === 'historical') {
       setActiveTab('donors');
     }
+  };
+
+  const handleProjectionsUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+
+    const file = files[0];
+    setProjectionsFileName(file.name);
+
+    try {
+      const parsedProjections = await parseProjectionsFile(file);
+      setProjectionsData(parsedProjections);
+    } catch (error) {
+      console.error('Failed to parse projections CSV', error);
+      alert('Unable to parse projections CSV file.');
+    }
+  };
+
+  const clearProjectionsData = () => {
+    setProjectionsData({});
+    setProjectionsFileName(null);
   };
 
   const parsedData = useMemo(() => {
@@ -1525,7 +1696,10 @@ const App = () => {
 
   }, [historicalData, levelThresholds, parsedData.length, timelineData]);
 
-  const insights = useMemo(() => buildDonationInsights(parsedData, levelThresholds), [parsedData, levelThresholds]);
+  const insights = useMemo(
+    () => buildDonationInsights(parsedData, levelThresholds, projectionsData),
+    [parsedData, levelThresholds, projectionsData]
+  );
 
   const filteredDonors = useMemo(() => {
     if (!stats) return [];
@@ -1639,6 +1813,21 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                   </button>
                 </span>
               )}
+              {projectionsFileName && (
+                <span className="inline-flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                  <Target className="w-3 h-3 text-emerald-600" />
+                  Projections: {projectionsFileName}
+                  <button
+                    type="button"
+                    onClick={clearProjectionsData}
+                    className="ml-1 hover:text-emerald-900 focus:outline-none"
+                    title="Remove projections"
+                    aria-label="Remove projections"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
             </div>
           </div>
           
@@ -1652,6 +1841,11 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
               <History className="w-4 h-4 text-indigo-600" />
               <span>{historicalFileName ? 'Change Master List' : 'Upload Master List'}</span>
               <input type="file" accept=".csv" onChange={handleHistoricalUpload} className="hidden" />
+            </label>
+            <label className="flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-4 py-2.5 rounded-xl cursor-pointer transition active:scale-95 font-semibold text-sm shadow-sm">
+              <Target className="w-4 h-4 text-emerald-600" />
+              <span>{projectionsFileName ? 'Change Projections' : 'Upload Projections'}</span>
+              <input type="file" accept=".csv" onChange={handleProjectionsUpload} className="hidden" />
             </label>
             {stats && (
               <>
@@ -1991,49 +2185,134 @@ ${stats.giftLevelData.map(level => `${level.name}: ${level.gifts} gifts, $${leve
                 )}
 
                 <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 mt-6">
-                  <div className="xl:col-span-3 border border-neutral-200 rounded-xl overflow-hidden">
-                    <div className="p-4 bg-neutral-50 border-b border-neutral-200">
-                      <h3 className="text-sm font-bold text-neutral-800">Month-over-month breakdown</h3>
-                      <p className="text-xs text-neutral-400 font-medium mt-0.5">New vs returning donors, retention, and total change vs the prior month</p>
-                    </div>
-                    <div className="overflow-x-auto max-h-96 overflow-y-auto">
-                      <table className="w-full text-sm">
-                        <caption className="sr-only">Month-over-month donation breakdown</caption>
-                        <thead className="bg-neutral-50 text-neutral-500 border-b border-neutral-200 text-left sticky top-0 z-10">
-                          <tr>
-                            <th className="font-semibold px-4 py-3 bg-neutral-50">Month</th>
-                            <th className="font-semibold px-3 py-3 text-right bg-neutral-50">Total</th>
-                            <th className="font-semibold px-3 py-3 text-right bg-neutral-50">MoM</th>
-                            <th className="font-semibold px-3 py-3 text-right bg-neutral-50">Donors</th>
-                            <th className="font-semibold px-3 py-3 text-right bg-neutral-50">New</th>
-                            <th className="font-semibold px-3 py-3 text-right bg-neutral-50">Ret.</th>
-                            <th className="font-semibold px-3 py-3 text-right bg-neutral-50">Retention</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-neutral-100 bg-white">
-                          {insights.monthInsights.map(m => (
-                            <tr key={m.key} className={m.hasData ? 'text-neutral-600 font-medium hover:bg-neutral-50/50' : 'text-neutral-300'}>
-                              <td className="px-4 py-2.5 whitespace-nowrap font-semibold text-neutral-800">{m.shortLabel}</td>
-                              <td className="px-3 py-2.5 text-right font-bold text-neutral-900">{m.hasData ? formatCurrency(m.totalAmount) : '—'}</td>
-                              <td className={`px-3 py-2.5 text-right font-semibold ${
-                                m.amountDeltaPct === null
-                                  ? 'text-neutral-300'
-                                  : m.amountDeltaPct > 0
-                                    ? 'text-emerald-600'
-                                    : m.amountDeltaPct < 0
-                                      ? 'text-rose-600'
-                                      : 'text-neutral-400'
-                              }`}>
-                                {m.amountDeltaPct === null ? '—' : `${m.amountDeltaPct > 0 ? '+' : ''}${m.amountDeltaPct.toFixed(0)}%`}
-                              </td>
-                              <td className="px-3 py-2.5 text-right">{m.hasData ? m.donorCount : '—'}</td>
-                              <td className="px-3 py-2.5 text-right text-emerald-700 font-semibold">{m.hasData ? m.newDonors : '—'}</td>
-                              <td className="px-3 py-2.5 text-right text-indigo-700 font-semibold">{m.hasData ? m.returningDonors : '—'}</td>
-                              <td className="px-3 py-2.5 text-right">{m.retentionRate === null ? '—' : `${m.retentionRate.toFixed(0)}%`}</td>
+                  <div className="xl:col-span-3 border border-neutral-200 rounded-xl overflow-hidden flex flex-col justify-between">
+                    <div>
+                      <div className="p-4 bg-neutral-50 border-b border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-bold text-neutral-800">Month-over-month breakdown</h3>
+                          <p className="text-xs text-neutral-400 font-medium mt-0.5">
+                            {insights.hasProjections ? 'Actual vs projected numbers, variance vs goal, and retention' : 'New vs returning donors, retention, and total change vs prior month'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {projectionsFileName ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-xs font-semibold shadow-sm">
+                              <Target className="w-3.5 h-3.5 text-emerald-600" />
+                              {projectionsFileName}
+                              <button
+                                type="button"
+                                onClick={clearProjectionsData}
+                                className="ml-1 text-emerald-700 hover:text-emerald-950 focus:outline-none"
+                                aria-label="Clear projections"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          ) : (
+                            <label className="flex items-center gap-1.5 bg-white border border-neutral-200 hover:border-emerald-300 hover:bg-emerald-50/50 text-neutral-700 hover:text-emerald-800 px-3 py-1.5 rounded-lg cursor-pointer transition active:scale-95 text-xs font-semibold shadow-sm">
+                              <Target className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Upload Projections</span>
+                              <input type="file" accept=".csv" onChange={handleProjectionsUpload} className="hidden" />
+                            </label>
+                          )}
+                        </div>
+                      </div>
+
+                      {insights.hasProjections && (
+                        <div className="m-4 mb-2 p-3.5 bg-emerald-50/60 border border-emerald-200/80 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs">
+                          <div className="flex items-center gap-2 text-emerald-950 font-medium">
+                            <Target className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <span>
+                              <strong>YTD Performance vs Forecast:</strong> {formatCurrency(insights.ytdActual)} raised vs {formatCurrency(insights.ytdProjected)} projected (
+                              <span className={insights.ytdVariance >= 0 ? 'text-emerald-700 font-bold' : 'text-rose-700 font-bold'}>
+                                {insights.ytdVariance >= 0 ? '+' : ''}{formatCurrency(insights.ytdVariance)} {insights.ytdVariancePct !== null ? `(${insights.ytdVariancePct >= 0 ? '+' : ''}${insights.ytdVariancePct.toFixed(1)}%)` : ''}
+                              </span>
+                              )
+                            </span>
+                          </div>
+                          <span className="font-bold px-2.5 py-0.5 bg-white border border-emerald-200 text-emerald-800 rounded-md">
+                            Goal Pacing: {insights.ytdProjected > 0 ? `${((insights.ytdActual / insights.ytdProjected) * 100).toFixed(0)}%` : '—'}
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                        <table className="w-full text-sm">
+                          <caption className="sr-only">Month-over-month donation breakdown</caption>
+                          <thead className="bg-neutral-50 text-neutral-500 border-b border-neutral-200 text-left sticky top-0 z-10">
+                            <tr>
+                              <th className="font-semibold px-4 py-3 bg-neutral-50">Month</th>
+                              <th className="font-semibold px-3 py-3 text-right bg-neutral-50">Actual Total</th>
+                              {insights.hasProjections && (
+                                <>
+                                  <th className="font-semibold px-3 py-3 text-right bg-neutral-50">Projected</th>
+                                  <th className="font-semibold px-3 py-3 text-right bg-neutral-50">vs Goal</th>
+                                  <th className="font-semibold px-3 py-3 text-right bg-neutral-50">% Goal</th>
+                                </>
+                              )}
+                              <th className="font-semibold px-3 py-3 text-right bg-neutral-50">MoM</th>
+                              <th className="font-semibold px-3 py-3 text-right bg-neutral-50">Donors</th>
+                              <th className="font-semibold px-3 py-3 text-right bg-neutral-50">New</th>
+                              <th className="font-semibold px-3 py-3 text-right bg-neutral-50">Ret.</th>
+                              <th className="font-semibold px-3 py-3 text-right bg-neutral-50">Retention</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="divide-y divide-neutral-100 bg-white">
+                            {insights.monthInsights.map(m => (
+                              <tr key={m.key} className={m.hasData || (insights.hasProjections && m.projectedAmount !== null) ? 'text-neutral-600 font-medium hover:bg-neutral-50/50' : 'text-neutral-300'}>
+                                <td className="px-4 py-2.5 whitespace-nowrap font-semibold text-neutral-800">{m.shortLabel}</td>
+                                <td className="px-3 py-2.5 text-right font-bold text-neutral-900">{m.hasData ? formatCurrency(m.totalAmount) : (insights.hasProjections ? '$0.00' : '—')}</td>
+                                {insights.hasProjections && (
+                                  <>
+                                    <td className="px-3 py-2.5 text-right text-neutral-600 font-medium">
+                                      {m.projectedAmount !== null ? formatCurrency(m.projectedAmount) : '—'}
+                                    </td>
+                                    <td className={`px-3 py-2.5 text-right font-bold ${
+                                      m.varianceAmount === null
+                                        ? 'text-neutral-300'
+                                        : m.varianceAmount >= 0
+                                          ? 'text-emerald-600'
+                                          : 'text-rose-600'
+                                    }`}>
+                                      {m.varianceAmount === null
+                                        ? '—'
+                                        : `${m.varianceAmount >= 0 ? '+' : ''}${formatCurrency(m.varianceAmount)}${m.variancePct !== null ? ` (${m.variancePct >= 0 ? '+' : ''}${m.variancePct.toFixed(0)}%)` : ''}`}
+                                    </td>
+                                    <td className="px-3 py-2.5 text-right font-semibold text-neutral-700">
+                                      {m.targetAchievedPct !== null ? (
+                                        <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${
+                                          m.targetAchievedPct >= 100
+                                            ? 'bg-emerald-50 text-emerald-700 font-bold'
+                                            : m.targetAchievedPct >= 75
+                                              ? 'bg-blue-50 text-blue-700'
+                                              : 'bg-amber-50 text-amber-700'
+                                        }`}>
+                                          {m.targetAchievedPct.toFixed(0)}%
+                                        </span>
+                                      ) : '—'}
+                                    </td>
+                                  </>
+                                )}
+                                <td className={`px-3 py-2.5 text-right font-semibold ${
+                                  m.amountDeltaPct === null
+                                    ? 'text-neutral-300'
+                                    : m.amountDeltaPct > 0
+                                      ? 'text-emerald-600'
+                                      : m.amountDeltaPct < 0
+                                        ? 'text-rose-600'
+                                        : 'text-neutral-400'
+                                }`}>
+                                  {m.amountDeltaPct === null ? '—' : `${m.amountDeltaPct > 0 ? '+' : ''}${m.amountDeltaPct.toFixed(0)}%`}
+                                </td>
+                                <td className="px-3 py-2.5 text-right">{m.hasData ? m.donorCount : '—'}</td>
+                                <td className="px-3 py-2.5 text-right text-emerald-700 font-semibold">{m.hasData ? m.newDonors : '—'}</td>
+                                <td className="px-3 py-2.5 text-right text-indigo-700 font-semibold">{m.hasData ? m.returningDonors : '—'}</td>
+                                <td className="px-3 py-2.5 text-right">{m.retentionRate === null ? '—' : `${m.retentionRate.toFixed(0)}%`}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
 
